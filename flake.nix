@@ -62,11 +62,29 @@
               cargo-watch
               rust-analyzer
               self.formatter.${system}
+	      wayland
+	      libxkbcommon
+	      libGL
+	      libx11
+	      libxcursor
+	      libxrandr
+	      libxi
+	      alsa-lib
             ];
 
             env = {
               # Required by rust-analyzer
               RUST_SRC_PATH = "${pkgs.rustToolchain}/lib/rustlib/src/rust/library";
+	      LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+	        pkgs.wayland
+	        pkgs.libxkbcommon
+	        pkgs.libGL
+	        pkgs.libx11
+	        pkgs.libxcursor
+	        pkgs.libxrandr
+	        pkgs.libxi
+		pkgs.alsa-lib
+	      ];
             };
           };
         }
