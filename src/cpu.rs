@@ -84,6 +84,7 @@ impl Cpu {
         match instruction {
             ThumbInstruction::SoftwareInterrupt => self.software_interrupt(opcode),
             ThumbInstruction::UnconditionalBranch => self.unconditional_branch(opcode),
+            ThumbInstruction::HiRegisterOperationsBranchExchange => self.hi_register_operations_branch_exchange(opcode),
             ThumbInstruction::ALUOperations => self.alu_operations(opcode),
             ThumbInstruction::MoveCompareAddSubtractImmediate => self.move_compare_add_subtract_immediate(opcode),
             ThumbInstruction::AddSubtract => self.add_subtract(opcode),
@@ -102,6 +103,9 @@ impl Cpu {
         const MASK: u16 = 0x07FF;
         let offset = (opcode & MASK << 1) as i32;
         self.program_counter = self.program_counter.wrapping_add_signed(offset);
+    }
+
+    fn hi_register_operations_branch_exchange(&mut self, opcode: u16) {
     }
 
     fn alu_operations(&mut self, opcode: u16) {
@@ -146,7 +150,7 @@ impl Cpu {
         let immediate_value = opcode & IMMEDIATE_VALUE_MASK;
         match sub_opcode {
             0b00 => self.store(u32::from(immediate_value), destination_register),
-            0b01 => _ = self.get_register(destination_register).wrapping_sub(u32::from(immediate_value)), // TODO: set flags
+            0b01 => self.test_cmp(destination_register, u32::from(immediate_value)),
             0b10 => self.store(self.get_register(destination_register).wrapping_add(u32::from(immediate_value)), destination_register),
             0b11 => self.store(self.get_register(destination_register).wrapping_sub(u32::from(immediate_value)), destination_register),
             _ => unreachable!(),
@@ -193,10 +197,10 @@ impl Cpu {
         let source_register = (opcode & SOURCE_REGISTER_MASK) >> SOURCE_REGISTER_SHIFT;
         let destination_register = opcode & DESTINATION_REGISTER_MASK;
         let value = match sub_opcode {
-            0x00 => self.get_register(source_register) << immediate_value,
-            0x01 => self.get_register(source_register) >> immediate_value,
+            0b00 => self.get_register(source_register) << immediate_value,
+            0b01 => self.get_register(source_register) >> immediate_value,
             // Arithmatic shift (signed right shift)
-            0x10 => (self.get_register(source_register) as i32 >> immediate_value) as u32,
+            0b10 => (self.get_register(source_register) as i32 >> immediate_value) as u32,
             _ => unreachable!(),
         };
         self.store(value, destination_register);
@@ -265,29 +269,37 @@ impl Cpu {
     fn ror(&mut self, source_register: u16) -> u32 {
         let temp = self.get_carry_flag();
         self.program_status_register.set_carry(self.get_register(source_register) & 0x01 == 0x01);
-        let rotated = (self.get_register(source_register) >> 1) & (temp << 31);
+        let rotated = (self.get_register(source_register) >> 1) | (temp << 31);
         rotated
     }
 
     fn test_and(&mut self, source_register: u16, destination_register: u16) {
         let temp = self.get_register(source_register) & self.get_register(destination_register);
-        self.program_status_register.set_negative(temp & 0x8000 == 0x8000);
-        self.program_status_register.set_zero(temp == 0x0000);
+        self.program_status_register.set_negative(temp & 0x8000_0000 == 0x8000_0000);
+        self.program_status_register.set_zero(temp == 0x0000_0000);
     }
 
     fn test_add(&mut self, source_register: u16, destination_register: u16) {
         let (temp, carry) = self.get_register(source_register).overflowing_add(self.get_register(destination_register));
-        self.program_status_register.set_negative(temp & 0x8000 == 0x8000);
-        self.program_status_register.set_zero(temp == 0x0000);
+        self.program_status_register.set_negative(temp & 0x8000_0000 == 0x8000_0000);
+        self.program_status_register.set_zero(temp == 0x0000_0000);
         self.program_status_register.set_carry(carry);
         self.program_status_register.set_overflow(carry);
     }
 
     fn test_sub(&mut self, source_register: u16, destination_register: u16) {
         let (temp, overflow) = self.get_register(source_register).overflowing_sub(self.get_register(destination_register));
-        self.program_status_register.set_negative(temp & 0x8000 == 0x8000);
-        self.program_status_register.set_zero(temp == 0x0000);
+        self.program_status_register.set_negative(temp & 0x8000_0000 == 0x8000_0000);
+        self.program_status_register.set_zero(temp == 0x0000_0000);
         self.program_status_register.set_carry(self.get_register(source_register) >= self.get_register(destination_register));
+        self.program_status_register.set_overflow(overflow);
+    }
+
+    fn test_cmp(&mut self, source_register: u16, immediate: u32) {
+        let (temp, overflow) = self.get_register(source_register).overflowing_sub(immediate);
+        self.program_status_register.set_negative(temp & 0x8000_0000 == 0x8000_0000);
+        self.program_status_register.set_zero(temp == 0x0000_0000);
+        self.program_status_register.set_carry(self.get_register(source_register) >= immediate);
         self.program_status_register.set_overflow(overflow);
     }
 }
@@ -397,19 +409,19 @@ fn is_load_store_sign_extended_byte_halfword(opcode: u16) -> bool {
 
 fn is_pc_relative_load(opcode: u16) -> bool {
     const MASK: u16 = 0xF800;
-    const PC_RELATIVE_LOAD: u16 = 0x6800;
+    const PC_RELATIVE_LOAD: u16 = 0x4800;
     opcode & MASK == PC_RELATIVE_LOAD
 }
 
 fn is_hi_register_operations_branch_exchange(opcode: u16) -> bool {
     const MASK: u16 = 0xFC00;
-    const HI_REGISTER_OPERATIONS_BRANCH_EXCHANGE: u16 = 0x6600;
+    const HI_REGISTER_OPERATIONS_BRANCH_EXCHANGE: u16 = 0x4400;
     opcode & MASK == HI_REGISTER_OPERATIONS_BRANCH_EXCHANGE
 }
 
 fn is_alu_operations(opcode: u16) -> bool {
     const MASK: u16 = 0xFC00;
-    const ALU_OPERATIONS: u16 = 0x6000;
+    const ALU_OPERATIONS: u16 = 0x4000;
     opcode & MASK == ALU_OPERATIONS
 }
 
@@ -436,14 +448,93 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mov_shifted_register_sets_register() {
+    fn move_shifted_register_sets_register() {
         let mut cpu = Cpu::default();
         let mut bus = Bus::new();
 
-        cpu.r00 = 0xFFFF;
+        cpu.r00 = 0xFFFF_FFFF;
         bus.write_16(cpu.get_program_counter() as usize, 0x0001);
         cpu.cpu_cycle(&bus);
-        assert_eq!(cpu.r01, 0xFFFF);
+        assert_eq!(cpu.r01, 0xFFFF_FFFF);
+    }
+
+    #[test]
+    fn move_shifted_register_left_shift() {
+        let mut cpu = Cpu::default();
+        let mut bus = Bus::new();
+
+        cpu.r00 = 0x0000_0001;
+        bus.write_16(0, 0x0040);
+        cpu.cpu_cycle(&bus);
+        assert_eq!(cpu.r00, 0x0000_0002);
+    }
+
+    #[test]
+    fn move_shifted_register_right_shift() {
+        let mut cpu = Cpu::default();
+        let mut bus = Bus::new();
+
+        cpu.r00 = 0x0000_0002;
+        bus.write_16(0, 0x0840);
+        cpu.cpu_cycle(&bus);
+        assert_eq!(cpu.r00, 0x0000_0001);
+    }
+
+    #[test]
+    fn move_shifted_register_arithmetic_shift() {
+        let mut cpu = Cpu::default();
+        let mut bus = Bus::new();
+
+        cpu.r00 = 0x8000_0002;
+        bus.write_16(0, 0x1040);
+        cpu.cpu_cycle(&bus);
+        assert_eq!(cpu.r00, 0xC000_0001);
+    }
+
+    #[test]
+    fn add_subtract_add_register() {
+        let mut cpu = Cpu::default();
+        let mut bus = Bus::new();
+
+        cpu.r00 = 0x0000_0001;
+        cpu.r01 = 0x0000_0001;
+        bus.write_16(0, 0x1842);
+        cpu.cpu_cycle(&bus);
+        assert_eq!(cpu.r02, 0x0000_0002);
+    }
+
+    #[test]
+    fn add_subtract_add_immediate() {
+        let mut cpu = Cpu::default();
+        let mut bus = Bus::new();
+
+        cpu.r00 = 0x0000_0001;
+        bus.write_16(0, 0x1C41);
+        cpu.cpu_cycle(&bus);
+        assert_eq!(cpu.r01, 0x0000_0002);
+    }
+
+    #[test]
+    fn add_subtract_sub_register() {
+        let mut cpu = Cpu::default();
+        let mut bus = Bus::new();
+
+        cpu.r00 = 0x0000_0001;
+        cpu.r01 = 0x0000_0001;
+        bus.write_16(0, 0x1A42);
+        cpu.cpu_cycle(&bus);
+        assert_eq!(cpu.r02, 0x0000_0000);
+    }
+
+    #[test]
+    fn add_subtract_sub_immediate() {
+        let mut cpu = Cpu::default();
+        let mut bus = Bus::new();
+
+        cpu.r00 = 0x0000_0001;
+        bus.write_16(0, 0x1E41);
+        cpu.cpu_cycle(&bus);
+        assert_eq!(cpu.r01, 0x0000_0000);
     }
 }
 

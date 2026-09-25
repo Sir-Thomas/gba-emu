@@ -27,25 +27,29 @@ const VRAM_END_ADDRESS: usize = VRAM_START_ADDRESS + VRAM_SIZE;
 const OAM_END_ADDRESS: usize = OAM_START_ADDRESS + OAM_SIZE;
 
 pub struct Bus {
-    bios_rom: Box<[u8; BIOS_ROM_SIZE]>,
-    external_working_ram: Box<[u8; EXTERNAL_WORKING_RAM_SIZE]>,
-    internal_working_ram: Box<[u8; INTERNAL_WORKING_RAM_SIZE]>,
-    io_registers: Box<[u8; IO_REGISTERS_SIZE]>,
-    palette_ram: Box<[u8; PALETTE_RAM_SIZE]>,
-    vram: Box<[u8; VRAM_SIZE]>,
-    oam: Box<[u8; OAM_SIZE]>,
+    // TODO: Switch these back to Boxed arrays (do they have to be boxed?)
+    // Vec allows me to get rid of large stack allocations with 0 effort, but these should be arrays
+    // so that they have a fixed size that the compiler can guaruntee for me. I will just have to
+    // come up with a good way to initialize them without using the stack.
+    bios_rom: Vec<u8>,
+    external_working_ram: Vec<u8>,
+    internal_working_ram: Vec<u8>,
+    io_registers: Vec<u8>,
+    palette_ram: Vec<u8>,
+    vram: Vec<u8>,
+    oam: Vec<u8>,
 }
 
 impl Bus {
     pub fn new() -> Self {
         Self {
-            bios_rom: Box::new([0; BIOS_ROM_SIZE]),
-            external_working_ram: Box::new([0; EXTERNAL_WORKING_RAM_SIZE]),
-            internal_working_ram: Box::new([0; INTERNAL_WORKING_RAM_SIZE]),
-            io_registers: Box::new([0; IO_REGISTERS_SIZE]),
-            palette_ram: Box::new([0; PALETTE_RAM_SIZE]),
-            vram: Box::new([0; VRAM_SIZE]),
-            oam: Box::new([0; OAM_SIZE]),
+            bios_rom: vec![0; BIOS_ROM_SIZE],
+            external_working_ram: vec![0; EXTERNAL_WORKING_RAM_SIZE],
+            internal_working_ram: vec![0; INTERNAL_WORKING_RAM_SIZE],
+            io_registers: vec![0; IO_REGISTERS_SIZE],
+            palette_ram: vec![0; PALETTE_RAM_SIZE],
+            vram: vec![0; VRAM_SIZE],
+            oam: vec![0; OAM_SIZE],
         }
     }
 
