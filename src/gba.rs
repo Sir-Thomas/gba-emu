@@ -20,7 +20,7 @@ impl Gba {
     }
 
     pub fn cpu_cycle(&mut self) {
-        self.cpu.cpu_cycle(&self.bus);
+        self.cpu.cpu_cycle(&mut self.bus);
     }
 
     pub fn get_next_instruction(&self) -> (u16, ThumbInstruction) {
