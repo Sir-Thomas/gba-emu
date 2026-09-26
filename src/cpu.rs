@@ -73,23 +73,35 @@ impl Cpu {
         (opcode, instruction)
     }
 
-    pub fn cpu_cycle(&mut self, bus: &Bus) {
+    pub fn cpu_cycle(&mut self, bus: &mut Bus) {
         let opcode = bus.read_16(self.program_counter as usize);
         let instruction = decode_instruction(opcode);
         self.program_counter = self.program_counter.wrapping_add(2);
-        self.run_instruction(instruction, opcode);
+        self.run_instruction(instruction, opcode, bus);
     }
 
-    fn run_instruction(&mut self, instruction: ThumbInstruction, opcode: u16) {
+    fn run_instruction(&mut self, instruction: ThumbInstruction, opcode: u16, bus: &mut Bus) {
         match instruction {
             ThumbInstruction::SoftwareInterrupt => self.software_interrupt(opcode),
             ThumbInstruction::UnconditionalBranch => self.unconditional_branch(opcode),
+            ThumbInstruction::ConditionalBranch => self.conditional_branch(opcode),
+            ThumbInstruction::MultipleLoadstore => self.multiple_loadstore(opcode, bus),
+            ThumbInstruction::LongBranchWithLink => self.long_branch_with_link(opcode),
+            ThumbInstruction::AddOffsetToStackPointer => self.add_offset_to_stack_pointer(opcode),
+            ThumbInstruction::PushPopRegisters => self.push_pop_registers(opcode, bus),
+            ThumbInstruction::LoadStoreHalfword => self.load_store_halfword(opcode, bus),
+            ThumbInstruction::SPRelativeLoadStore => self.sp_relative_load_store(opcode, bus),
+            ThumbInstruction::LoadAddress => self.load_address(opcode, bus),
+            ThumbInstruction::LoadStoreWithImmediateOffset => self.load_store_with_immediate_offset(opcode, bus),
+            ThumbInstruction::LoadStoreWithRegisterOffset => self.load_store_with_register_offset(opcode, bus),
+            ThumbInstruction::LoadStoreSignExtendedByteHalfword => self.load_store_sign_extended_byte_halfword(opcode, bus),
+            ThumbInstruction::PCRelativeLoad => self.pc_relative_load(opcode, bus),
             ThumbInstruction::HiRegisterOperationsBranchExchange => self.hi_register_operations_branch_exchange(opcode),
             ThumbInstruction::ALUOperations => self.alu_operations(opcode),
             ThumbInstruction::MoveCompareAddSubtractImmediate => self.move_compare_add_subtract_immediate(opcode),
             ThumbInstruction::AddSubtract => self.add_subtract(opcode),
             ThumbInstruction::MoveShiftedRegister => self.move_shifted_register(opcode),
-            _ => unimplemented!()
+            ThumbInstruction::Unimplemented => unimplemented!(),
         }
     }
 
@@ -105,7 +117,286 @@ impl Cpu {
         self.program_counter = self.program_counter.wrapping_add_signed(offset);
     }
 
+    fn conditional_branch(&mut self, _opcode: u16) {
+        todo!();
+    }
+
+    fn multiple_loadstore(&mut self, _opcode: u16, _bus: &mut Bus) {
+        todo!();
+    }
+
+    fn long_branch_with_link(&mut self, _opcode: u16) {
+        todo!();
+    }
+
+    fn add_offset_to_stack_pointer(&mut self, opcode: u16) {
+        const SIGN_FLAG_MASK: u16 = 0x0080;
+        const SIGN_FLAG_SHIFT: usize = 7;
+        const WORD_MASK: u16 = 0x007F;
+        const WORD_SHIFT: usize = 2;
+        let sign = (opcode & SIGN_FLAG_MASK) >> SIGN_FLAG_SHIFT == 0x01;
+        let word = (opcode & WORD_MASK) << WORD_SHIFT;
+        if sign {
+            self.stack_pointer = self.stack_pointer.wrapping_sub(u32::from(word));
+        } else {
+            self.stack_pointer = self.stack_pointer.wrapping_add(u32::from(word));
+        }
+    }
+
+    fn push_pop_registers(&mut self, opcode: u16, _bus: &mut Bus) {
+        const LOAD_STORE_MASK: u16 = 0x0800;
+        const LOAD_STORE_SHIFT: usize = 11;
+        const PC_LR_MASK: u16 = 0x0100;
+        const PC_LR_SHIFT: usize = 8;
+        const R_LIST_MASK: u16 = 0x00FF;
+        let load = (opcode & LOAD_STORE_MASK) >> LOAD_STORE_SHIFT == 0x01;
+        let pc_lr = (opcode & PC_LR_MASK) >> PC_LR_SHIFT == 0x01;
+        let r_list = opcode & R_LIST_MASK;
+        if load {
+            self.pop_registers(r_list, pc_lr);
+        } else {
+            self.push_registers(r_list, pc_lr);
+        }
+    }
+
+    fn pop_registers(&mut self, r_list: u16, pc_lr: bool) {
+        if pc_lr {
+            self.pop_register(15);
+        }
+        if r_list & 0x01 == 0x01 {
+            self.pop_register(0);
+        }
+        if r_list & 0x02 == 0x02 {
+            self.pop_register(1);
+        }
+        if r_list & 0x04 == 0x04 {
+            self.pop_register(2);
+        }
+        if r_list & 0x08 == 0x08 {
+            self.pop_register(3);
+        }
+        if r_list & 0x10 == 0x10 {
+            self.pop_register(4);
+        }
+        if r_list & 0x20 == 0x20 {
+            self.pop_register(5);
+        }
+        if r_list & 0x40 == 0x40 {
+            self.pop_register(6);
+        }
+        if r_list & 0x80 == 0x80 {
+            self.pop_register(7);
+        }
+    }
+
+    fn push_registers(&mut self, r_list: u16, pc_lr: bool) {
+        if pc_lr {
+            self.push_register(14);
+        }
+        if r_list & 0x01 == 0x01 {
+            self.push_register(0);
+        }
+        if r_list & 0x02 == 0x02 {
+            self.push_register(1);
+        }
+        if r_list & 0x04 == 0x04 {
+            self.push_register(2);
+        }
+        if r_list & 0x08 == 0x08 {
+            self.push_register(3);
+        }
+        if r_list & 0x10 == 0x10 {
+            self.push_register(4);
+        }
+        if r_list & 0x20 == 0x20 {
+            self.push_register(5);
+        }
+        if r_list & 0x40 == 0x40 {
+            self.push_register(6);
+        }
+        if r_list & 0x80 == 0x80 {
+            self.push_register(7);
+        }
+    }
+
+    fn pop_register(&mut self, _register: u8) {
+        todo!();
+    }
+
+    fn push_register(&mut self, _register: u8) {
+        todo!();
+    }
+
+    fn load_store_halfword(&mut self, opcode: u16, bus: &mut Bus) {
+        const LOAD_STORE_MASK: u16 = 0x0800;
+        const LOAD_STORE_SHIFT: usize = 11;
+        const OFFSET_IMMEDIATE_MASK: u16 = 0x07C0;
+        const OFFSET_IMMEDIATE_SHIFT: usize = 5;
+        const BASE_REGISTER_MASK: u16 = 0x0038;
+        const BASE_REGISTER_SHIFT: usize = 3;
+        const SOURCE_DESTINATION_REGISTER_MASK: u16 = 0x0007;
+        let load = (opcode & LOAD_STORE_MASK) >> LOAD_STORE_SHIFT == 0x01;
+        // 6 bit immediate offset stored as 5 bits
+        let offset = (opcode & OFFSET_IMMEDIATE_MASK) >> OFFSET_IMMEDIATE_SHIFT << 1;
+        let base_register = (opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT;
+        let source_destination_register = opcode & SOURCE_DESTINATION_REGISTER_MASK;
+        let address = self.get_register(base_register).wrapping_add(offset as u32) as usize;
+        if load {
+            self.store(u32::from(bus.read_16(address)), source_destination_register);
+        } else {
+            bus.write_16(address, self.get_register(source_destination_register).truncate());
+        }
+    }
+
+    fn sp_relative_load_store(&mut self, _opcode: u16, _bus: &mut Bus) {
+        todo!();
+    }
+
+    fn load_address(&mut self, opcode: u16, bus: &Bus) {
+        const SOURCE_MASK: u16 = 0x0800;
+        const SOURCE_SHIFT: usize = 11;
+        const DESTINATION_REGISTER_MASK: u16 = 0x0700;
+        const DESTINATION_REGISTER_SHIFT: usize = 8;
+        const WORD_MASK: u16 = 0x00FF;
+        const WORD_SHIFT: usize = 2;
+        let source = (opcode & SOURCE_MASK) >> SOURCE_SHIFT == 0x01;
+        let destination_register = (opcode & DESTINATION_REGISTER_MASK) >> DESTINATION_REGISTER_SHIFT;
+        let word = (opcode & WORD_MASK) << WORD_SHIFT;
+        let address = if source {
+            self.stack_pointer.wrapping_add(word as u32)
+        } else {
+            self.program_counter.wrapping_add(word as u32)
+        };
+        self.store(bus.read_32(address as usize), destination_register);
+    }
+
+    fn load_store_with_immediate_offset(&mut self, opcode: u16, bus: &mut Bus) {
+        const BYTE_WORD_MASK: u16 = 0x1000;
+        const BYTE_WORD_SHIFT: usize = 12;
+        const LOAD_STORE_MASK: u16 = 0x0800;
+        const LOAD_STORE_SHIFT: usize = 11;
+        const OFFSET_IMMEDIATE_MASK: u16 = 0x07C0;
+        const OFFSET_IMMEDIATE_SHIFT: usize = 6;
+        const BASE_REGISTER_MASK: u16 = 0x0038;
+        const BASE_REGISTER_SHIFT: usize = 3;
+        const SOURCE_DESTINATION_REGISTER_MASK: u16 = 0x0007;
+        let load = (opcode & LOAD_STORE_MASK) >> LOAD_STORE_SHIFT == 0x01;
+        let byte = (opcode & BYTE_WORD_MASK) >> BYTE_WORD_SHIFT == 0x01;
+        let offset = (opcode & OFFSET_IMMEDIATE_MASK) >> OFFSET_IMMEDIATE_SHIFT;
+        let base_register = (opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT;
+        let source_destination_register = opcode & SOURCE_DESTINATION_REGISTER_MASK;
+        let byte_address = self.get_register(base_register).wrapping_add(offset as u32) as usize;
+        let word_address = self.get_register(base_register).wrapping_add((offset << 2) as u32) as usize;
+        match (load, byte) {
+            (true, true) => self.store(u32::from(bus.read_8(byte_address)), source_destination_register),
+            (true, false) => self.store(bus.read_32(word_address), source_destination_register),
+            (false, true) => bus.write_8(byte_address, self.get_register(source_destination_register).truncate()),
+            (false, false) => bus.write_32(word_address, self.get_register(source_destination_register)),
+        }
+    }
+
+    fn load_store_with_register_offset(&mut self, opcode: u16, bus: &mut Bus) {
+        const LOAD_STORE_MASK: u16 = 0x0800;
+        const LOAD_STORE_SHIFT: usize = 11;
+        const BYTE_WORD_MASK: u16 = 0x0400;
+        const BYTE_WORD_SHIFT: usize = 10;
+        const OFFSET_REGISTER_MASK: u16 = 0x01C0;
+        const OFFSET_REGISTER_SHIFT: usize = 6;
+        const BASE_REGISTER_MASK: u16 = 0x0038;
+        const BASE_REGISTER_SHIFT: usize = 3;
+        const SOURCE_DESTINATION_REGISTER_MASK: u16 = 0x0007;
+        let load = (opcode & LOAD_STORE_MASK) >> LOAD_STORE_SHIFT == 0x01;
+        let byte = (opcode & BYTE_WORD_MASK) >> BYTE_WORD_SHIFT == 0x01;
+        let offset_register = (opcode & OFFSET_REGISTER_MASK) >> OFFSET_REGISTER_SHIFT;
+        let base_register = (opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT;
+        let source_destination_register = opcode & SOURCE_DESTINATION_REGISTER_MASK;
+        let address = self.get_register(base_register).wrapping_add(self.get_register(offset_register)) as usize;
+        match (load, byte) {
+            (true, true) => self.store(u32::from(bus.read_8(address)), source_destination_register),
+            (true, false) => self.store(bus.read_32(address), source_destination_register),
+            (false, true) => bus.write_8(address, self.get_register(source_destination_register).truncate()),
+            (false, false) => bus.write_32(address, self.get_register(source_destination_register)),
+        }
+    }
+
+    fn load_store_sign_extended_byte_halfword(&mut self, opcode: u16, bus: &mut Bus) {
+        const H_FLAG_MASK: u16 = 0x0800;
+        const H_FLAG_SHIFT: usize = 11;
+        const SIGN_EXTEND_FLAG_MASK: u16 = 0x0400;
+        const SIGN_EXTEND_FLAG_SHIFT: usize = 10;
+        const OFFSET_REGISTER_MASK: u16 = 0x01C0;
+        const OFFSET_REGISTER_SHIFT: usize = 6;
+        const BASE_REGISTER_MASK: u16 = 0x0038;
+        const BASE_REGISTER_SHIFT: usize = 3;
+        const SOURCE_DESTINATION_REGISTER_MASK: u16 = 0x0007;
+        let h_flag = (opcode & H_FLAG_MASK) >> H_FLAG_SHIFT == 0x01;
+        let sign_extend_flag = (opcode & SIGN_EXTEND_FLAG_MASK) >> SIGN_EXTEND_FLAG_SHIFT == 0x01;
+        let offset_register = (opcode & OFFSET_REGISTER_MASK) >> OFFSET_REGISTER_SHIFT;
+        let base_register = (opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT;
+        let source_destination_register = opcode & SOURCE_DESTINATION_REGISTER_MASK;
+        let address = self.get_register(base_register).wrapping_add(self.get_register(offset_register)) as usize;
+        match (sign_extend_flag, h_flag) {
+            (false, false) => bus.write_16(address, self.get_register(source_destination_register).truncate()),
+            (false, true) => self.store(u32::from(bus.read_16(address)), source_destination_register),
+            (true, false) => self.store(bus.read_8(address).sign_extend(), source_destination_register),
+            (true, true) => self.store(bus.read_16(address).sign_extend(), source_destination_register),
+        }
+    }
+
+    fn pc_relative_load(&mut self, opcode: u16, bus: &Bus) {
+        const DESTINATION_REGISTER_MASK: u16 = 0x0700;
+        const DESTINATION_REGISTER_SHIFT: usize = 8;
+        const OFFSET_MASK: u16 = 0x00FF;
+        const OFFSET_SHIFT: usize = 2;
+        let destination_register = (opcode & DESTINATION_REGISTER_MASK) >> DESTINATION_REGISTER_SHIFT;
+        let offset = (opcode & OFFSET_MASK) << OFFSET_SHIFT; // offset is 10 bit word aligned, so
+                                                               // it is stored as 8 bits
+        self.store(bus.read_32(self.program_counter.wrapping_add(u32::from(offset)) as usize), destination_register);
+    }
+ 
     fn hi_register_operations_branch_exchange(&mut self, opcode: u16) {
+        const OPCODE_MASK: u16 = 0x0300;
+        const OPCODE_SHIFT: usize = 8;
+        const H1_MASK: u16 = 0x0080;
+        const H1_SHIFT: usize = 7;
+        const H2_MASK: u16 = 0x0040;
+        const H2_SHIFT: usize = 6;
+        const SOURCE_REGISTER_MASK: u16 = 0x0038;
+        const SOURCE_REGISTER_SHIFT: usize = 3;
+        const DESTINATION_REGISTER_MASK: u16 = 0x0007;
+        let sub_opcode = (opcode & OPCODE_MASK) >> OPCODE_SHIFT;
+        let h1 = (opcode & H1_MASK) >> H1_SHIFT;
+        let h2 = (opcode & H2_MASK) >> H2_SHIFT;
+        let source_register = (opcode & SOURCE_REGISTER_MASK) >> SOURCE_REGISTER_SHIFT;
+        let destination_register = opcode & DESTINATION_REGISTER_MASK;
+        match sub_opcode {
+            0b00 => self.hi_register_operations_branch_exchange_add(destination_register | h1 << 3, source_register | h2 << 3),
+            0b01 => self.hi_register_operations_branch_exchange_cmp(destination_register | h1 << 3, source_register | h2 << 3),
+            0b10 => self.hi_register_operations_branch_exchange_mov(destination_register | h1 << 3, source_register | h2 << 3),
+            0b11 => self.hi_register_operations_branch_exchange_bx(source_register | h2 << 3),
+            _ => unreachable!(),
+        }
+    }
+
+    fn hi_register_operations_branch_exchange_add(&mut self, destination_register: u16, source_register: u16) {
+        let value = self.get_register(destination_register).wrapping_add(self.get_register(source_register));
+        self.store(value, destination_register);
+    }
+
+    fn hi_register_operations_branch_exchange_cmp(&mut self, destination_register: u16, source_register: u16) {
+        self.test_sub(destination_register, source_register);
+    }
+
+    fn hi_register_operations_branch_exchange_mov(&mut self, destination_register: u16, source_register: u16) {
+        self.store(self.get_register(source_register), destination_register);
+    }
+
+    fn hi_register_operations_branch_exchange_bx(&mut self, source_register: u16) {
+        let value = self.get_register(source_register);
+        self.program_counter = value & 0xFFFF_FFFE; // remove last bit for alignment
+        if value & 0x01 == 0x00 { // last bit determines thumb vs arm mode
+            todo!(); // switch to arm mode
+        }
     }
 
     fn alu_operations(&mut self, opcode: u16) {
@@ -443,6 +734,30 @@ fn is_move_shifted_register(opcode: u16) -> bool {
     opcode & MASK == MOVE_SHIFTED_REGISTER
 }
 
+trait Extendable {
+    fn sign_extend(self) -> u32;
+}
+
+impl Extendable for u8 {
+    fn sign_extend(self) -> u32 {
+        if self & 0x80 == 0x10 {
+            0xFFFF_FF00 + self as u32
+        } else {
+            self as u32
+        }
+    }
+}
+
+impl Extendable for u16 {
+    fn sign_extend(self) -> u32 {
+        if self & 0x8000 == 0x1000 {
+            0xFFFF_0000 + self as u32
+        } else {
+            self as u32
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -454,7 +769,7 @@ mod tests {
 
         cpu.r00 = 0xFFFF_FFFF;
         bus.write_16(cpu.get_program_counter() as usize, 0x0001);
-        cpu.cpu_cycle(&bus);
+        cpu.cpu_cycle(&mut bus);
         assert_eq!(cpu.r01, 0xFFFF_FFFF);
     }
 
@@ -465,7 +780,7 @@ mod tests {
 
         cpu.r00 = 0x0000_0001;
         bus.write_16(0, 0x0040);
-        cpu.cpu_cycle(&bus);
+        cpu.cpu_cycle(&mut bus);
         assert_eq!(cpu.r00, 0x0000_0002);
     }
 
@@ -476,7 +791,7 @@ mod tests {
 
         cpu.r00 = 0x0000_0002;
         bus.write_16(0, 0x0840);
-        cpu.cpu_cycle(&bus);
+        cpu.cpu_cycle(&mut bus);
         assert_eq!(cpu.r00, 0x0000_0001);
     }
 
@@ -487,7 +802,7 @@ mod tests {
 
         cpu.r00 = 0x8000_0002;
         bus.write_16(0, 0x1040);
-        cpu.cpu_cycle(&bus);
+        cpu.cpu_cycle(&mut bus);
         assert_eq!(cpu.r00, 0xC000_0001);
     }
 
@@ -499,7 +814,7 @@ mod tests {
         cpu.r00 = 0x0000_0001;
         cpu.r01 = 0x0000_0001;
         bus.write_16(0, 0x1842);
-        cpu.cpu_cycle(&bus);
+        cpu.cpu_cycle(&mut bus);
         assert_eq!(cpu.r02, 0x0000_0002);
     }
 
@@ -510,7 +825,7 @@ mod tests {
 
         cpu.r00 = 0x0000_0001;
         bus.write_16(0, 0x1C41);
-        cpu.cpu_cycle(&bus);
+        cpu.cpu_cycle(&mut bus);
         assert_eq!(cpu.r01, 0x0000_0002);
     }
 
@@ -522,7 +837,7 @@ mod tests {
         cpu.r00 = 0x0000_0001;
         cpu.r01 = 0x0000_0001;
         bus.write_16(0, 0x1A42);
-        cpu.cpu_cycle(&bus);
+        cpu.cpu_cycle(&mut bus);
         assert_eq!(cpu.r02, 0x0000_0000);
     }
 
@@ -533,7 +848,7 @@ mod tests {
 
         cpu.r00 = 0x0000_0001;
         bus.write_16(0, 0x1E41);
-        cpu.cpu_cycle(&bus);
+        cpu.cpu_cycle(&mut bus);
         assert_eq!(cpu.r01, 0x0000_0000);
     }
 }
