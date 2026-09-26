@@ -53,12 +53,23 @@ impl Bus {
         }
     }
 
+    pub fn write_8(&mut self, address: usize, value: u8) {
+        self.bios_rom[address] = value;
+    }
+
     pub fn write_16(&mut self, address: usize, value: u16) {
         self.bios_rom[address] = ((value & 0xFF00) >> 8) as u8;
         self.bios_rom[address + 1] = (value & 0xFF) as u8;
     }
 
-    pub fn read_8(&self, address: usize) -> u16 {
+    pub fn write_32(&mut self, address: usize, value: u32) {
+        self.bios_rom[address] = ((value & 0xFF00_0000) >> 24) as u8;
+        self.bios_rom[address + 1] = ((value & 0x00FF_0000) >> 16) as u8;
+        self.bios_rom[address + 2] = ((value & 0xFF00_0000) >> 8) as u8;
+        self.bios_rom[address + 3] = (value & 0x00FF_0000) as u8;
+    }
+
+    pub fn read_8(&self, address: usize) -> u8 {
         let data = self.read_32(address);
         let data8 = (data & 0xFF00_0000) >> 24;
         data8.truncate()
