@@ -5,7 +5,7 @@ const EXTERNAL_WORKING_RAM_SIZE: usize = 0x0004_0000;
 const INTERNAL_WORKING_RAM_SIZE: usize = 0x8000;
 const IO_REGISTERS_SIZE: usize = 0x03FF;
 const PALETTE_RAM_SIZE: usize = 0x0400;
-const VRAM_SIZE: usize = 0x0024_0000;
+const VRAM_SIZE: usize = 0x0001_8000;
 const OAM_SIZE: usize = 0x0400;
 
 const BIOS_ROM_START_ADDRESS: usize = 0x0000_0000;
@@ -54,19 +54,78 @@ impl Bus {
     }
 
     pub fn write_8(&mut self, address: usize, value: u8) {
-        self.bios_rom[address] = value;
+        match address {
+            // General Internal Memory
+            BIOS_ROM_START_ADDRESS..BIOS_ROM_END_ADDRESS => {
+                self.set_bios(address, value);
+            }
+            EXTERNAL_WORKING_RAM_START_ADDRESS..EXTERNAL_WORKING_RAM_END_ADDRESS => {
+                self.set_external_working_ram(address, value);
+            }
+            INTERNAL_WORKING_RAM_START_ADDRESS..INTERNAL_WORKING_RAM_END_ADDRESS => {
+                self.set_internal_working_ram(address, value);
+            }
+            IO_REGISTERS_START_ADDRESS..IO_REGISTERS_END_ADDRESS => {
+                self.set_io(address, value);
+            }
+            PALETTE_RAM_START_ADDRESS..PALETTE_RAM_END_ADDRESS => {
+                self.set_palette_ram(address, value);
+            }
+            VRAM_START_ADDRESS..VRAM_END_ADDRESS => {
+                self.set_vram(address, value);
+            }
+            OAM_START_ADDRESS..OAM_END_ADDRESS => {
+                self.set_oam(address, value);
+            }
+            _ => {}
+        }
     }
 
     pub fn write_16(&mut self, address: usize, value: u16) {
-        self.bios_rom[address] = ((value & 0xFF00) >> 8) as u8;
-        self.bios_rom[address + 1] = (value & 0xFF) as u8;
+        self.write_8(address, ((value & 0xFF00) >> 8) as u8);
+        self.write_8(address + 1, (value & 0x00FF) as u8);
     }
 
     pub fn write_32(&mut self, address: usize, value: u32) {
-        self.bios_rom[address] = ((value & 0xFF00_0000) >> 24) as u8;
-        self.bios_rom[address + 1] = ((value & 0x00FF_0000) >> 16) as u8;
-        self.bios_rom[address + 2] = ((value & 0xFF00_0000) >> 8) as u8;
-        self.bios_rom[address + 3] = (value & 0x00FF_0000) as u8;
+        self.write_8(address, ((value & 0xFF00_0000) >> 8) as u8);
+        self.write_8(address + 1, (value & 0x00FF_0000) as u8);
+        self.write_8(address + 2, ((value & 0x0000_FF00) >> 8) as u8);
+        self.write_8(address + 3, (value & 0x0000_00FF) as u8);
+    }
+
+    fn set_bios(&mut self, address: usize, value: u8) {
+        let index = address - BIOS_ROM_START_ADDRESS;
+        self.bios_rom[index] = value;
+    }
+
+    fn set_external_working_ram(&mut self, address: usize, value: u8) {
+        let index = address - EXTERNAL_WORKING_RAM_START_ADDRESS;
+        self.external_working_ram[index] = value;
+    }
+
+    fn set_internal_working_ram(&mut self, address: usize, value: u8) {
+        let index = address - INTERNAL_WORKING_RAM_START_ADDRESS;
+        self.internal_working_ram[index] = value;
+    }
+
+    fn set_io(&mut self, address: usize, value: u8) {
+        let index = address - IO_REGISTERS_START_ADDRESS;
+        self.io_registers[index] = value;
+    }
+
+    fn set_palette_ram(&mut self, address: usize, value: u8) {
+        let index = address - PALETTE_RAM_START_ADDRESS;
+        self.palette_ram[index] = value;
+    }
+
+    fn set_vram(&mut self, address: usize, value: u8) {
+        let index = address - VRAM_START_ADDRESS;
+        self.vram[index] = value;
+    }
+
+    fn set_oam(&mut self, address: usize, value: u8) {
+        let index = address - OAM_START_ADDRESS;
+        self.oam[index] = value;
     }
 
     pub fn read_8(&self, address: usize) -> u8 {
@@ -95,49 +154,70 @@ impl Bus {
             PALETTE_RAM_START_ADDRESS..PALETTE_RAM_END_ADDRESS => self.get_palette_ram(address),
             VRAM_START_ADDRESS..VRAM_END_ADDRESS => self.get_vram(address),
             OAM_START_ADDRESS..OAM_END_ADDRESS => self.get_oam(address),
-            _ => 0x0000_0000
+            _ => 0x0000_0000,
         }
     }
 
     fn get_bios(&self, address: usize) -> u32 {
         let index = address.saturating_sub(BIOS_ROM_START_ADDRESS);
-        let data = self.bios_rom.get(index..index+4).unwrap();
-        ((data[0] as u32) << 24) | ((data[1] as u32) << 16) | ((data[2] as u32) << 8) | data[3] as u32
+        let data = self.bios_rom.get(index..index + 4).unwrap();
+        ((data[0] as u32) << 24)
+            | ((data[1] as u32) << 16)
+            | ((data[2] as u32) << 8)
+            | data[3] as u32
     }
 
     fn get_external_working_ram(&self, address: usize) -> u32 {
         let index = address.saturating_sub(EXTERNAL_WORKING_RAM_START_ADDRESS);
-        let data = self.external_working_ram.get(index..index+4).unwrap();
-        ((data[0] as u32) << 24) | ((data[1] as u32) << 16) | ((data[2] as u32) << 8) | data[3] as u32
+        let data = self.external_working_ram.get(index..index + 4).unwrap();
+        ((data[0] as u32) << 24)
+            | ((data[1] as u32) << 16)
+            | ((data[2] as u32) << 8)
+            | data[3] as u32
     }
 
     fn get_internal_working_ram(&self, address: usize) -> u32 {
         let index = address.saturating_sub(INTERNAL_WORKING_RAM_START_ADDRESS);
-        let data = self.internal_working_ram.get(index..index+4).unwrap();
-        ((data[0] as u32) << 24) | ((data[1] as u32) << 16) | ((data[2] as u32) << 8) | data[3] as u32
+        let data = self.internal_working_ram.get(index..index + 4).unwrap();
+        ((data[0] as u32) << 24)
+            | ((data[1] as u32) << 16)
+            | ((data[2] as u32) << 8)
+            | data[3] as u32
     }
 
     fn get_io(&self, address: usize) -> u32 {
         let index = address.saturating_sub(IO_REGISTERS_START_ADDRESS);
-        let data = self.io_registers.get(index..index+4).unwrap();
-        ((data[0] as u32) << 24) | ((data[1] as u32) << 16) | ((data[2] as u32) << 8) | data[3] as u32
+        let data = self.io_registers.get(index..index + 4).unwrap();
+        ((data[0] as u32) << 24)
+            | ((data[1] as u32) << 16)
+            | ((data[2] as u32) << 8)
+            | data[3] as u32
     }
 
     fn get_palette_ram(&self, address: usize) -> u32 {
         let index = address.saturating_sub(PALETTE_RAM_START_ADDRESS);
-        let data = self.palette_ram.get(index..index+4).unwrap();
-        ((data[0] as u32) << 24) | ((data[1] as u32) << 16) | ((data[2] as u32) << 8) | data[3] as u32
+        let data = self.palette_ram.get(index..index + 4).unwrap();
+        ((data[0] as u32) << 24)
+            | ((data[1] as u32) << 16)
+            | ((data[2] as u32) << 8)
+            | data[3] as u32
     }
 
     fn get_vram(&self, address: usize) -> u32 {
         let index = address.saturating_sub(VRAM_START_ADDRESS);
-        let data = self.vram.get(index..index+4).unwrap();
-        ((data[0] as u32) << 24) | ((data[1] as u32) << 16) | ((data[2] as u32) << 8) | data[3] as u32
+        let data = self.vram.get(index..index + 4).unwrap();
+        ((data[0] as u32) << 24)
+            | ((data[1] as u32) << 16)
+            | ((data[2] as u32) << 8)
+            | data[3] as u32
     }
 
     fn get_oam(&self, address: usize) -> u32 {
         let index = address.saturating_sub(OAM_START_ADDRESS);
-        let data = self.oam.get(index..index+4).unwrap();
-        ((data[0] as u32) << 24) | ((data[1] as u32) << 16) | ((data[2] as u32) << 8) | data[3] as u32
+        let data = self.oam.get(index..index + 4).unwrap();
+        ((data[0] as u32) << 24)
+            | ((data[1] as u32) << 16)
+            | ((data[2] as u32) << 8)
+            | data[3] as u32
     }
 }
