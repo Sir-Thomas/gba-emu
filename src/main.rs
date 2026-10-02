@@ -4,6 +4,7 @@ mod app;
 mod bus;
 mod cpu;
 mod gba;
+mod ppu;
 mod program_status_register;
 
 use crate::gba::Gba;
@@ -17,8 +18,6 @@ fn main() -> Result {
     run_native(
         "GBA",
         options,
-        Box::new(|cc| {
-            Ok(Box::new(app::GbaApp::new(cc, gba)))
-        }),
+        Box::new(|cc| Ok(Box::new(app::GbaApp::new(cc, gba)))),
     )
 }

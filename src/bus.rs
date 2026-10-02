@@ -84,6 +84,10 @@ impl Bus {
     pub fn write_16(&mut self, address: usize, value: u16) {
         self.write_8(address, ((value & 0xFF00) >> 8) as u8);
         self.write_8(address + 1, (value & 0x00FF) as u8);
+        //println!(
+        //"Wrote {value:#06X} to {address:#010X}. Result: {:#06X}",
+        //self.read_16(address)
+        //);
     }
 
     pub fn write_32(&mut self, address: usize, value: u32) {
