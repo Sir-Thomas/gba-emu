@@ -837,6 +837,29 @@ impl Cpu {
     }
 }
 
+pub enum ArmInstruction {
+    DataProcessingPsrTransfer,
+    Multiply,
+    MultiplyLong,
+    SingleDataSwap,
+    BranchAndExchange,
+    HalfwordDataTransferRegisterOffset,
+    HalfwordDataTransferImmediateOffset,
+    SingleDataTransfer,
+    Undefined,
+    BlockDataTransfer,
+    Branch,
+    CoprocessorDataTransfer,
+    CoprocessorDataOperation,
+    CoprocessorRegisterTransfer,
+    SoftwareInterrupt,
+}
+
+const ARM_DECODE_TABLE: [(u32, u32, ArmInstruction); 2] = [
+    (0x0FFF_FFF0, 0x012F_FF10, ArmInstruction::BranchAndExchange),
+    (0x000000000, 0x000000000, ArmInstruction::Undefined), // TODO: fix
+];
+
 fn decode_arm_instruction(_opcode: u32) -> u32 {
     todo!();
 }
