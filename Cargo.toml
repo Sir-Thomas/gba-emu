@@ -7,3 +7,20 @@ edition = "2024"
 eframe = "0.36.2"
 egui = "0.36.2"
 moving_avg = "0.2.0"
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "allow"
+arithmetic_side_effects = "deny"
+unreachable = "allow"
+unimplemented = "deny"
+unchecked_time_subtraction = "deny"
+todo = "allow"
+string_slice = "deny"
+panic_in_result_fn = "deny"
+panic = "deny"
+exit = "deny"
+as_conversions = "allow"

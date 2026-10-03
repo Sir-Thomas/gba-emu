@@ -86,7 +86,7 @@ impl Bus {
     pub fn write_16(&mut self, address: usize, value: u16) {
         let bytes = value.to_le_bytes();
         for (i, byte) in bytes.iter().enumerate() {
-            self.write_8(address + i, *byte);
+            self.write_8(address.wrapping_add(i), *byte);
         }
         //println!(
         //"Wrote {value:#06X} to {address:#010X}. Result: {:#06X}",
@@ -97,42 +97,42 @@ impl Bus {
     pub fn write_32(&mut self, address: usize, value: u32) {
         let bytes = value.to_le_bytes();
         for (i, byte) in bytes.iter().enumerate() {
-            self.write_8(address + i, *byte);
+            self.write_8(address.wrapping_add(i), *byte);
         }
     }
 
     fn set_bios(&mut self, address: usize, value: u8) {
-        let index = address - BIOS_ROM_START_ADDRESS;
+        let index = address.wrapping_sub(BIOS_ROM_START_ADDRESS);
         self.bios_rom[index] = value;
     }
 
     fn set_external_working_ram(&mut self, address: usize, value: u8) {
-        let index = address - EXTERNAL_WORKING_RAM_START_ADDRESS;
+        let index = address.wrapping_sub(EXTERNAL_WORKING_RAM_START_ADDRESS);
         self.external_working_ram[index] = value;
     }
 
     fn set_internal_working_ram(&mut self, address: usize, value: u8) {
-        let index = address - INTERNAL_WORKING_RAM_START_ADDRESS;
+        let index = address.wrapping_sub(INTERNAL_WORKING_RAM_START_ADDRESS);
         self.internal_working_ram[index] = value;
     }
 
     fn set_io(&mut self, address: usize, value: u8) {
-        let index = address - IO_REGISTERS_START_ADDRESS;
+        let index = address.wrapping_sub(IO_REGISTERS_START_ADDRESS);
         self.io_registers[index] = value;
     }
 
     fn set_palette_ram(&mut self, address: usize, value: u8) {
-        let index = address - PALETTE_RAM_START_ADDRESS;
+        let index = address.wrapping_sub(PALETTE_RAM_START_ADDRESS);
         self.palette_ram[index] = value;
     }
 
     fn set_vram(&mut self, address: usize, value: u8) {
-        let index = address - VRAM_START_ADDRESS;
+        let index = address.wrapping_sub(VRAM_START_ADDRESS);
         self.vram[index] = value;
     }
 
     fn set_oam(&mut self, address: usize, value: u8) {
-        let index = address - OAM_START_ADDRESS;
+        let index = address.wrapping_sub(OAM_START_ADDRESS);
         self.oam[index] = value;
     }
 
@@ -155,47 +155,47 @@ impl Bus {
     }
 
     pub fn read_16(&self, address: usize) -> u16 {
-        let bytes = array::from_fn(|i| self.read_8(address + i));
+        let bytes = array::from_fn(|i| self.read_8(address.wrapping_add(i)));
         u16::from_le_bytes(bytes)
     }
 
     pub fn read_32(&self, address: usize) -> u32 {
-        let bytes = array::from_fn(|i| self.read_8(address + i));
+        let bytes = array::from_fn(|i| self.read_8(address.wrapping_add(i)));
         u32::from_le_bytes(bytes)
     }
 
     fn get_bios(&self, address: usize) -> u8 {
-        let index = address.saturating_sub(BIOS_ROM_START_ADDRESS);
-        *self.bios_rom.get(index).unwrap()
+        let index = address.wrapping_sub(BIOS_ROM_START_ADDRESS);
+        self.bios_rom[index]
     }
 
     fn get_external_working_ram(&self, address: usize) -> u8 {
-        let index = address.saturating_sub(EXTERNAL_WORKING_RAM_START_ADDRESS);
-        *self.external_working_ram.get(index).unwrap()
+        let index = address.wrapping_sub(EXTERNAL_WORKING_RAM_START_ADDRESS);
+        self.external_working_ram[index]
     }
 
     fn get_internal_working_ram(&self, address: usize) -> u8 {
-        let index = address.saturating_sub(INTERNAL_WORKING_RAM_START_ADDRESS);
-        *self.internal_working_ram.get(index).unwrap()
+        let index = address.wrapping_sub(INTERNAL_WORKING_RAM_START_ADDRESS);
+        self.internal_working_ram[index]
     }
 
     fn get_io(&self, address: usize) -> u8 {
-        let index = address.saturating_sub(IO_REGISTERS_START_ADDRESS);
-        *self.io_registers.get(index).unwrap()
+        let index = address.wrapping_sub(IO_REGISTERS_START_ADDRESS);
+        self.io_registers[index]
     }
 
     fn get_palette_ram(&self, address: usize) -> u8 {
-        let index = address.saturating_sub(PALETTE_RAM_START_ADDRESS);
-        *self.palette_ram.get(index).unwrap()
+        let index = address.wrapping_sub(PALETTE_RAM_START_ADDRESS);
+        self.palette_ram[index]
     }
 
     fn get_vram(&self, address: usize) -> u8 {
-        let index = address.saturating_sub(VRAM_START_ADDRESS);
-        *self.vram.get(index).unwrap()
+        let index = address.wrapping_sub(VRAM_START_ADDRESS);
+        self.vram[index]
     }
 
     fn get_oam(&self, address: usize) -> u8 {
-        let index = address.saturating_sub(OAM_START_ADDRESS);
-        *self.oam.get(index).unwrap()
+        let index = address.wrapping_sub(OAM_START_ADDRESS);
+        self.oam[index]
     }
 }

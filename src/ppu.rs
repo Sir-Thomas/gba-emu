@@ -41,7 +41,8 @@ impl Ppu {
 
     fn draw_mode3(&mut self, bus: &Bus) -> &Vec<u16> {
         (0..DISPLAY_WIDTH * DISPLAY_HEIGHT).for_each(|address| {
-            self.framebuffer[address] = bus.read_16(address * 2 + VRAM_START_ADDRESS);
+            self.framebuffer[address] =
+                bus.read_16(address.wrapping_mul(2).wrapping_add(VRAM_START_ADDRESS));
         });
         &self.framebuffer
     }

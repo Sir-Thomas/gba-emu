@@ -1,3 +1,10 @@
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CpuMode {
+    Arm,
+    #[default]
+    Thumb,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub enum Mode {
     #[default]
@@ -10,6 +17,12 @@ pub enum Mode {
     System = 0b11111,
 }
 
+impl From<Mode> for u32 {
+    fn from(val: Mode) -> Self {
+        val as Self
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ProgramStatusRegister {
     negative: bool,
@@ -18,14 +31,14 @@ pub struct ProgramStatusRegister {
     overflow: bool,
     irq_disable: bool,
     fiq_disable: bool,
-    state_bit: bool,
+    state: CpuMode,
     mode_bits: Mode,
 }
 
 impl From<ProgramStatusRegister> for u32 {
     fn from(val: ProgramStatusRegister) -> Self {
-        let mut value = u32::from(val.mode_bits as u32);
-        if val.state_bit {
+        let mut value = Self::from(val.mode_bits);
+        if val.state == CpuMode::Thumb {
             value |= 0x20;
         }
         if val.fiq_disable {
@@ -51,67 +64,67 @@ impl From<ProgramStatusRegister> for u32 {
 }
 
 impl ProgramStatusRegister {
-    pub fn set_negative(&mut self, state: bool) {
+    pub const fn set_negative(&mut self, state: bool) {
         self.negative = state;
     }
 
-    pub fn get_negative(&self) -> bool {
+    pub const fn negative(self) -> bool {
         self.negative
     }
 
-    pub fn set_zero(&mut self, state: bool) {
+    pub const fn set_zero(&mut self, state: bool) {
         self.zero = state;
     }
 
-    pub fn get_zero(&self) -> bool {
+    pub const fn zero(self) -> bool {
         self.zero
     }
 
-    pub fn set_carry(&mut self, state: bool) {
+    pub const fn set_carry(&mut self, state: bool) {
         self.carry = state;
     }
 
-    pub fn get_carry(&self) -> bool {
+    pub const fn carry(self) -> bool {
         self.carry
     }
 
-    pub fn set_overflow(&mut self, state: bool) {
+    pub const fn set_overflow(&mut self, state: bool) {
         self.overflow = state;
     }
 
-    pub fn get_overflow(&self) -> bool {
+    pub const fn overflow(self) -> bool {
         self.overflow
     }
 
-    pub fn set_irq_disable(&mut self, state: bool) {
+    pub const fn set_irq_disable(&mut self, state: bool) {
         self.irq_disable = state;
     }
 
-    pub fn get_irq_disable(&self) -> bool {
+    pub const fn irq_disable(self) -> bool {
         self.irq_disable
     }
 
-    pub fn set_fiq_disable(&mut self, state: bool) {
+    pub const fn set_fiq_disable(&mut self, state: bool) {
         self.fiq_disable = state;
     }
 
-    pub fn get_fiq_disable(&self) -> bool {
+    pub const fn fiq_disable(self) -> bool {
         self.fiq_disable
     }
 
-    pub fn set_state_bit(&mut self, state: bool) {
-        self.state_bit = state;
+    pub const fn set_state(&mut self, state: CpuMode) {
+        self.state = state;
     }
 
-    pub fn get_state_bit(&self) -> bool {
-        self.state_bit
+    pub const fn state(self) -> CpuMode {
+        self.state
     }
 
-    pub fn set_mode(&mut self, mode: Mode) {
+    pub const fn set_mode(&mut self, mode: Mode) {
         self.mode_bits = mode;
     }
 
-    pub fn get_mode(&self) -> Mode {
+    pub const fn mode(self) -> Mode {
         self.mode_bits
     }
 }

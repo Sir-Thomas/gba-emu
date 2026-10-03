@@ -59,7 +59,7 @@ impl GbaApp {
         }
     }
 
-    fn run(&mut self, ui: &mut Ui, _frame: &mut Frame) {
+    fn run(&mut self, ui: &Ui, _frame: &mut Frame) {
         self.previous_frame = self.current_frame;
         self.current_frame = Instant::now();
         let frame_time = self.current_frame.duration_since(self.previous_frame);
@@ -81,11 +81,8 @@ impl GbaApp {
                 let image = framebuffer_to_image(self.gba.draw());
                 self.display_texture.set(image, TextureOptions::NEAREST);
             }
-            let (opcode, instruction) = self.gba.get_next_instruction();
-            ui.label(format!(
-                "Next Instruction: {:#06X} {:?}",
-                opcode, instruction
-            ));
+            let (opcode, instruction) = self.gba.next_instruction();
+            ui.label(format!("Next Instruction: {opcode:#06X} {instruction:?}"));
             // if ui.add(Button::new("Insert opcode")).clicked() {
             // if let Ok(value) = opcode.parse() {
             // self.gba.insert_opcode(value);
@@ -100,10 +97,10 @@ impl GbaApp {
             }
             ui.label(format!(
                 "Program Counter: {:#06X}",
-                self.gba.get_program_counter()
+                self.gba.program_counter()
             ));
-            ui.label(format!("R00: {:#06X}", self.gba.get_r00()));
-            ui.label(format!("R01: {:#06X}", self.gba.get_r01()));
+            ui.label(format!("R00: {:#06X}", self.gba.r00()));
+            ui.label(format!("R01: {:#06X}", self.gba.r01()));
             ui.add(Image::new(&self.display_texture).fit_to_original_size(self.scale));
         });
     }
