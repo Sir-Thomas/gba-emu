@@ -10,28 +10,28 @@ pub struct ProgramStatusRegister {
     mode_bits: u8,
 }
 
-impl Into<u32> for ProgramStatusRegister {
-    fn into(self) -> u32 {
-        let mut value = u32::from(self.mode_bits);
-        if self.state_bit {
+impl From<ProgramStatusRegister> for u32 {
+    fn from(val: ProgramStatusRegister) -> Self {
+        let mut value = u32::from(val.mode_bits);
+        if val.state_bit {
             value |= 0x20;
         }
-        if self.fiq_disable {
+        if val.fiq_disable {
             value |= 0x40;
         }
-        if self.irq_disable {
+        if val.irq_disable {
             value |= 0x80;
         }
-        if self.overflow {
+        if val.overflow {
             value |= 0x1000;
         }
-        if self.carry {
+        if val.carry {
             value |= 0x2000;
         }
-        if self.zero {
+        if val.zero {
             value |= 0x4000;
         }
-        if self.negative {
+        if val.negative {
             value |= 0x8000;
         }
         value

@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use crate::bus::Bus;
 use crate::gba::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::ppu::Mode::Mode3;

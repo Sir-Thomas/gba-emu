@@ -58,7 +58,7 @@ impl Gba {
         self.cpu.set_r00(value);
     }
 
-    pub fn draw(&mut self) -> &Vec<u16> {
+    pub fn draw(&mut self) -> &[u16] {
         self.ppu.draw(&self.bus)
     }
 }

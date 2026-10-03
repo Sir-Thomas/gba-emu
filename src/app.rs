@@ -1,10 +1,12 @@
+#![allow(unused)]
+
 use std::time::{Duration, Instant};
 
 use eframe::{
     CreationContext, Frame,
     egui::{ColorImage, TextureOptions},
 };
-use egui::{Button, CentralPanel, Color32, Image, TextBuffer, TextEdit, Ui};
+use egui::{Button, CentralPanel, Color32, Image, TextEdit, Ui};
 use moving_avg::MovingAverage;
 
 use crate::gba::{DISPLAY_HEIGHT, DISPLAY_WIDTH, Gba};
@@ -90,10 +92,11 @@ impl GbaApp {
             // }
             // }
             let response = ui.add(TextEdit::singleline(&mut self.text_input));
-            if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                if let Ok(value) = u16::from_str_radix(&self.text_input, 16) {
-                    self.gba.insert_opcode(value);
-                }
+            if response.lost_focus()
+                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                && let Ok(value) = u16::from_str_radix(&self.text_input, 16)
+            {
+                self.gba.insert_opcode(value);
             }
             ui.label(format!(
                 "Program Counter: {:#06X}",
@@ -115,7 +118,7 @@ impl eframe::App for GbaApp {
     }
 }
 
-fn framebuffer_to_image(framebuffer: &Vec<u16>) -> ColorImage {
+fn framebuffer_to_image(framebuffer: &[u16]) -> ColorImage {
     let pixels = framebuffer
         .iter()
         .map(|pixel| {

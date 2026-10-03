@@ -166,36 +166,36 @@ impl Bus {
 
     fn get_bios(&self, address: usize) -> u8 {
         let index = address.saturating_sub(BIOS_ROM_START_ADDRESS);
-        self.bios_rom.get(index).unwrap().clone()
+        *self.bios_rom.get(index).unwrap()
     }
 
     fn get_external_working_ram(&self, address: usize) -> u8 {
         let index = address.saturating_sub(EXTERNAL_WORKING_RAM_START_ADDRESS);
-        self.external_working_ram.get(index).unwrap().clone()
+        *self.external_working_ram.get(index).unwrap()
     }
 
     fn get_internal_working_ram(&self, address: usize) -> u8 {
         let index = address.saturating_sub(INTERNAL_WORKING_RAM_START_ADDRESS);
-        self.internal_working_ram.get(index).unwrap().clone()
+        *self.internal_working_ram.get(index).unwrap()
     }
 
     fn get_io(&self, address: usize) -> u8 {
         let index = address.saturating_sub(IO_REGISTERS_START_ADDRESS);
-        self.io_registers.get(index).unwrap().clone()
+        *self.io_registers.get(index).unwrap()
     }
 
     fn get_palette_ram(&self, address: usize) -> u8 {
         let index = address.saturating_sub(PALETTE_RAM_START_ADDRESS);
-        self.palette_ram.get(index).unwrap().clone()
+        *self.palette_ram.get(index).unwrap()
     }
 
     fn get_vram(&self, address: usize) -> u8 {
         let index = address.saturating_sub(VRAM_START_ADDRESS);
-        self.vram.get(index).unwrap().clone()
+        *self.vram.get(index).unwrap()
     }
 
     fn get_oam(&self, address: usize) -> u8 {
         let index = address.saturating_sub(OAM_START_ADDRESS);
-        self.oam.get(index).unwrap().clone()
+        *self.oam.get(index).unwrap()
     }
 }
