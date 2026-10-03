@@ -127,4 +127,25 @@ impl ProgramStatusRegister {
     pub const fn mode(self) -> Mode {
         self.mode_bits
     }
+
+    pub fn check_conditions(&self, conditions: u8) -> bool {
+        match conditions {
+            0b0000 => self.zero,
+            0b0001 => !self.zero,
+            0b0010 => self.carry,
+            0b0011 => !self.carry,
+            0b0100 => self.negative,
+            0b0101 => !self.negative,
+            0b0110 => self.overflow,
+            0b0111 => !self.overflow,
+            0b1000 => self.carry && !self.zero,
+            0b1001 => !self.carry || self.zero,
+            0b1010 => self.negative == self.overflow,
+            0b1011 => self.negative != self.overflow,
+            0b1100 => !self.zero && (self.negative == self.overflow),
+            0b1101 => self.zero && (self.negative != self.overflow),
+            0b1110 => true,
+            _ => unreachable!(),
+        }
+    }
 }

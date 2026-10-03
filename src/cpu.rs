@@ -86,13 +86,96 @@ impl Cpu {
 
     pub fn arm_cycle(&mut self, bus: &mut Bus) {
         let opcode = bus.read_32(self.program_counter as usize);
-        let instruction = decode_arm_instruction(opcode);
         self.program_counter = self.program_counter.wrapping_add(4);
-        self.run_arm_instruction(instruction, opcode, bus);
+        if self
+            .current_program_status_register
+            .check_conditions(conditions(opcode))
+        {
+            let instruction = decode_arm_instruction(opcode);
+            self.run_arm_instruction(instruction, opcode, bus);
+        }
     }
 
-    fn run_arm_instruction(&self, _instruction: u32, _opcode: u32, _bus: &mut Bus) {
-        todo!();
+    fn run_arm_instruction(&self, instruction: ArmInstruction, opcode: u32, _bus: &mut Bus) {
+        match instruction {
+            ArmInstruction::DataProcessingPsrTransfer => self.data_processing_psr_transfer(opcode),
+            ArmInstruction::Multiply => self.multiply(opcode),
+            ArmInstruction::MultiplyLong => self.multiply_long(opcode),
+            ArmInstruction::SingleDataSwap => self.single_data_swap(opcode),
+            ArmInstruction::BranchAndExchange => self.branch_and_exchange(opcode),
+            ArmInstruction::HalfwordDataTransferRegisterOffset => {
+                self.halfword_data_transfer_register_offset(opcode)
+            }
+            ArmInstruction::HalfwordDataTransferImmediateOffset => {
+                self.halfword_data_transfer_immediate_offset(opcode)
+            }
+            ArmInstruction::SingleDataTransfer => self.single_data_transfer(opcode),
+            ArmInstruction::Undefined => unreachable!(),
+            ArmInstruction::BlockDataTransfer => self.block_data_transfer(opcode),
+            ArmInstruction::Branch => self.branch(opcode),
+            ArmInstruction::CoprocessorDataTransfer => self.coprocessor_data_transfer(opcode),
+            ArmInstruction::CoprocessorDataOperation => self.coprocessor_data_operation(opcode),
+            ArmInstruction::CoprocessorRegisterTransfer => {
+                self.coprocessor_register_transfer(opcode)
+            }
+            ArmInstruction::SoftwareInterrupt => self.arm_software_interrupt(opcode),
+        }
+    }
+
+    fn data_processing_psr_transfer(&self, _opcode: u32) {
+        todo!("DataProcessingPsrTransfer");
+    }
+
+    fn multiply(&self, _opcode: u32) {
+        todo!("Multiply");
+    }
+
+    fn multiply_long(&self, _opcode: u32) {
+        todo!("MultiplyLong");
+    }
+
+    fn single_data_swap(&self, _opcode: u32) {
+        todo!("SingleDataSwap");
+    }
+
+    fn branch_and_exchange(&self, _opcode: u32) {
+        todo!("BranchAndExchange");
+    }
+
+    fn halfword_data_transfer_register_offset(&self, _opcode: u32) {
+        todo!("HalfwordDataTransferRegisterOffset");
+    }
+
+    fn halfword_data_transfer_immediate_offset(&self, _opcode: u32) {
+        todo!("HalfwordDataTransferImmediateOffset");
+    }
+
+    fn single_data_transfer(&self, _opcode: u32) {
+        todo!("SingleDataTransfer");
+    }
+
+    fn block_data_transfer(&self, _opcode: u32) {
+        todo!("BlockDataTransfer");
+    }
+
+    fn branch(&self, _opcode: u32) {
+        todo!("Branch");
+    }
+
+    fn coprocessor_data_transfer(&self, _opcode: u32) {
+        todo!("CoprocessorDataTransfer");
+    }
+
+    fn coprocessor_data_operation(&self, _opcode: u32) {
+        todo!("CoprocessorDataOperation");
+    }
+
+    fn coprocessor_register_transfer(&self, _opcode: u32) {
+        todo!("CoprocessorRegisterTransfer");
+    }
+
+    fn arm_software_interrupt(&self, _opcode: u32) {
+        todo!("ArmSoftwareInterrupt");
     }
 
     pub fn thumb_cycle(&mut self, bus: &mut Bus) {
@@ -104,7 +187,7 @@ impl Cpu {
 
     fn run_thumb_instruction(&mut self, instruction: ThumbInstruction, opcode: u16, bus: &mut Bus) {
         match instruction {
-            ThumbInstruction::SoftwareInterrupt => self.software_interrupt(),
+            ThumbInstruction::SoftwareInterrupt => self.thumb_software_interrupt(),
             ThumbInstruction::UnconditionalBranch => self.unconditional_branch(opcode),
             ThumbInstruction::ConditionalBranch => self.conditional_branch(opcode),
             ThumbInstruction::MultipleLoadstore => self.multiple_loadstore(opcode, bus),
@@ -137,7 +220,7 @@ impl Cpu {
         }
     }
 
-    const fn software_interrupt(&mut self) {
+    const fn thumb_software_interrupt(&mut self) {
         const SOFTWARE_INTERRUPT_ADDRESS: u32 = 0x0000_0008;
         self.link_register = self.program_counter;
         self.saved_program_status_register = self.current_program_status_register;
@@ -160,49 +243,11 @@ impl Cpu {
         const SIGNED_OFFSET_MASK: u16 = 0x00FF;
         let conditions = (opcode & CONDITIONS_MASK) >> CONDITIONS_SHIFT;
         let offset = ((opcode & SIGNED_OFFSET_MASK) as i8) << 1;
-        let branch = self.check_conditions(conditions);
+        let branch = self
+            .current_program_status_register
+            .check_conditions(conditions.truncate());
         if branch {
             self.program_counter = self.program_counter.wrapping_add_signed(i32::from(offset));
-        }
-    }
-
-    fn check_conditions(&self, conditions: u16) -> bool {
-        match conditions {
-            0b0000 => self.current_program_status_register.zero(),
-            0b0001 => !self.current_program_status_register.zero(),
-            0b0010 => self.current_program_status_register.carry(),
-            0b0011 => !self.current_program_status_register.carry(),
-            0b0100 => self.current_program_status_register.negative(),
-            0b0101 => !self.current_program_status_register.negative(),
-            0b0110 => self.current_program_status_register.overflow(),
-            0b0111 => !self.current_program_status_register.overflow(),
-            0b1000 => {
-                self.current_program_status_register.carry()
-                    && !self.current_program_status_register.zero()
-            }
-            0b1001 => {
-                !self.current_program_status_register.carry()
-                    || self.current_program_status_register.zero()
-            }
-            0b1010 => {
-                self.current_program_status_register.negative()
-                    == self.current_program_status_register.overflow()
-            }
-            0b1011 => {
-                self.current_program_status_register.negative()
-                    != self.current_program_status_register.overflow()
-            }
-            0b1100 => {
-                !self.current_program_status_register.zero()
-                    && (self.current_program_status_register.negative()
-                        == self.current_program_status_register.overflow())
-            }
-            0b1101 => {
-                self.current_program_status_register.zero()
-                    && (self.current_program_status_register.negative()
-                        != self.current_program_status_register.overflow())
-            }
-            _ => unreachable!(),
         }
     }
 
@@ -837,8 +882,61 @@ impl Cpu {
     }
 }
 
-fn decode_arm_instruction(_opcode: u32) -> u32 {
-    todo!();
+#[derive(Clone, Copy, Debug)]
+pub enum ArmInstruction {
+    DataProcessingPsrTransfer,
+    Multiply,
+    MultiplyLong,
+    SingleDataSwap,
+    BranchAndExchange,
+    HalfwordDataTransferRegisterOffset,
+    HalfwordDataTransferImmediateOffset,
+    SingleDataTransfer,
+    Undefined,
+    BlockDataTransfer,
+    Branch,
+    CoprocessorDataTransfer,
+    CoprocessorDataOperation,
+    CoprocessorRegisterTransfer,
+    SoftwareInterrupt,
+}
+
+const ARM_DECODE_TABLE: [(u32, u32, ArmInstruction); 13] = [
+    // Mask         Value                      Instruction
+    (0x0FFF_FFF0, 0x012F_FF10, ArmInstruction::BranchAndExchange),
+    (0x0E00_0000, 0x0800_0000, ArmInstruction::BlockDataTransfer),
+    (0x0E00_0000, 0x0A00_0000, ArmInstruction::Branch),
+    (0x0F00_0000, 0x0F00_0000, ArmInstruction::SoftwareInterrupt),
+    (0x0E00_0010, 0x0600_0010, ArmInstruction::Undefined),
+    (0x0C00_0000, 0x0400_0000, ArmInstruction::SingleDataTransfer),
+    (0x0F00_0FF0, 0x0400_0090, ArmInstruction::SingleDataSwap),
+    (0x0F80_00F0, 0x0000_0090, ArmInstruction::Multiply),
+    (0x0F80_00F0, 0x0080_0090, ArmInstruction::MultiplyLong),
+    (
+        0x0E40_0F90,
+        0x0000_0090,
+        ArmInstruction::HalfwordDataTransferRegisterOffset,
+    ),
+    (
+        0x0E40_0F90,
+        0x0040_0090,
+        ArmInstruction::HalfwordDataTransferImmediateOffset,
+    ),
+    (
+        0x0C00_0000,
+        0x0000_0000,
+        ArmInstruction::DataProcessingPsrTransfer,
+    ),
+    (0x0F80_00F0, 0x0080_0090, ArmInstruction::MultiplyLong),
+];
+
+fn decode_arm_instruction(opcode: u32) -> ArmInstruction {
+    ARM_DECODE_TABLE
+        .iter()
+        .find(|&&(mask, value, _)| opcode & mask == value)
+        .map_or(ArmInstruction::Undefined, |&(_, _, instruction)| {
+            instruction
+        })
 }
 
 // Look into `find` over a const table of (mask, value, ThumbInstruction)
@@ -989,6 +1087,12 @@ const fn is_move_shifted_register(opcode: u16) -> bool {
     const MASK: u16 = 0xE000;
     const MOVE_SHIFTED_REGISTER: u16 = 0x0000;
     opcode & MASK == MOVE_SHIFTED_REGISTER
+}
+
+fn conditions(opcode: u32) -> u8 {
+    const MASK: u32 = 0xF000_0000;
+    const SHIFT: usize = 28;
+    ((opcode & MASK) >> SHIFT).truncate()
 }
 
 trait Extendable {
