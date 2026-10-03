@@ -99,6 +99,10 @@ impl Cpu {
         self.run_arm_instruction(instruction, opcode, bus);
     }
 
+    fn run_arm_instruction(&mut self, _instruction: u32, _opcode: u32, _bus: &mut Bus) {
+        todo!();
+    }
+
     pub fn thumb_cycle(&mut self, bus: &mut Bus) {
         let opcode = bus.read_16(self.program_counter as usize);
         let instruction = decode_thumb_instruction(opcode);
@@ -670,7 +674,7 @@ impl Cpu {
         self.test_sub(dest, src);
     }
 
-    fn hi_register_operations_branch_exchange_mov(
+    fn hi_register_mov(
         &mut self,
         h1: bool,
         h2: bool,
@@ -883,7 +887,7 @@ impl Cpu {
     }
 
     fn get_carry_flag(&self) -> u32 {
-        if self.program_status_register.get_carry() {
+        if self.current_program_status_register.get_carry() {
             1
         } else {
             0
@@ -891,7 +895,7 @@ impl Cpu {
     }
 
     fn get_not_carry_flag(&self) -> u32 {
-        if self.program_status_register.get_carry() {
+        if self.current_program_status_register.get_carry() {
             0
         } else {
             1
@@ -902,7 +906,7 @@ impl Cpu {
         let mut rotated = self.get_register(destination_register);
         for _ in 0..self.get_register(source_register) {
             let temp = self.get_carry_flag();
-            self.program_status_register
+            self.current_program_status_register
                 .set_carry(rotated & 0x01 == 0x01);
             rotated = (rotated >> 1) | (temp << 31);
         }
@@ -911,46 +915,54 @@ impl Cpu {
 
     fn test_and(&mut self, source_register: u16, destination_register: u16) {
         let temp = self.get_register(source_register) & self.get_register(destination_register);
-        self.program_status_register
+        self.current_program_status_register
             .set_negative(temp & 0x8000_0000 == 0x8000_0000);
-        self.program_status_register.set_zero(temp == 0x0000_0000);
+        self.current_program_status_register
+            .set_zero(temp == 0x0000_0000);
     }
 
     fn test_add(&mut self, source_register: u16, destination_register: u16) {
         let (temp, carry) = self
             .get_register(source_register)
             .overflowing_add(self.get_register(destination_register));
-        self.program_status_register
+        self.current_program_status_register
             .set_negative(temp & 0x8000_0000 == 0x8000_0000);
-        self.program_status_register.set_zero(temp == 0x0000_0000);
-        self.program_status_register.set_carry(carry);
-        self.program_status_register.set_overflow(carry); // TODO: fix this
+        self.current_program_status_register
+            .set_zero(temp == 0x0000_0000);
+        self.current_program_status_register.set_carry(carry);
+        self.current_program_status_register.set_overflow(carry); // TODO: fix this
     }
 
     fn test_sub(&mut self, source_register: u16, destination_register: u16) {
         let (temp, overflow) = self
             .get_register(source_register)
             .overflowing_sub(self.get_register(destination_register));
-        self.program_status_register
+        self.current_program_status_register
             .set_negative(temp & 0x8000_0000 == 0x8000_0000);
-        self.program_status_register.set_zero(temp == 0x0000_0000);
-        self.program_status_register.set_carry(
+        self.current_program_status_register
+            .set_zero(temp == 0x0000_0000);
+        self.current_program_status_register.set_carry(
             self.get_register(source_register) >= self.get_register(destination_register),
         );
-        self.program_status_register.set_overflow(overflow);
+        self.current_program_status_register.set_overflow(overflow);
     }
 
     fn test_cmp(&mut self, source_register: u16, immediate: u32) {
         let (temp, overflow) = self
             .get_register(source_register)
             .overflowing_sub(immediate);
-        self.program_status_register
+        self.current_program_status_register
             .set_negative(temp & 0x8000_0000 == 0x8000_0000);
-        self.program_status_register.set_zero(temp == 0x0000_0000);
-        self.program_status_register
+        self.current_program_status_register
+            .set_zero(temp == 0x0000_0000);
+        self.current_program_status_register
             .set_carry(self.get_register(source_register) >= immediate);
-        self.program_status_register.set_overflow(overflow);
+        self.current_program_status_register.set_overflow(overflow);
     }
+}
+
+fn decode_arm_instruction(_opcode: u32) -> u32 {
+    todo!();
 }
 
 fn decode_thumb_instruction(opcode: u16) -> ThumbInstruction {
