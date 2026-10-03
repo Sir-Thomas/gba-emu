@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 
-use crate::{bus::Bus, program_status_register::ProgramStatusRegister};
+use crate::{
+    bus::Bus,
+    program_status_register::{Mode, ProgramStatusRegister},
+};
 
 #[derive(Debug)]
 pub enum ThumbInstruction {
@@ -27,6 +30,13 @@ pub enum ThumbInstruction {
 }
 
 #[derive(Default)]
+enum CpuMode {
+    #[default]
+    Thumb,
+    Arm,
+}
+
+#[derive(Default)]
 pub struct Cpu {
     r00: u32,
     r01: u32,
@@ -44,7 +54,9 @@ pub struct Cpu {
     stack_pointer: u32,
     link_register: u32,
     program_counter: u32,
-    program_status_register: ProgramStatusRegister,
+    current_program_status_register: ProgramStatusRegister,
+    saved_program_status_register: ProgramStatusRegister,
+    mode: CpuMode,
 }
 
 impl Cpu {
@@ -69,18 +81,32 @@ impl Cpu {
 
     pub fn get_next_instruction(&self, bus: &Bus) -> (u16, ThumbInstruction) {
         let opcode = bus.read_16(self.program_counter as usize);
-        let instruction = decode_instruction(opcode);
+        let instruction = decode_thumb_instruction(opcode);
         (opcode, instruction)
     }
 
     pub fn cpu_cycle(&mut self, bus: &mut Bus) {
-        let opcode = bus.read_16(self.program_counter as usize);
-        let instruction = decode_instruction(opcode);
-        self.program_counter = self.program_counter.wrapping_add(2);
-        self.run_instruction(instruction, opcode, bus);
+        match self.mode {
+            CpuMode::Arm => self.arm_cycle(bus),
+            CpuMode::Thumb => self.thumb_cycle(bus),
+        }
     }
 
-    fn run_instruction(&mut self, instruction: ThumbInstruction, opcode: u16, bus: &mut Bus) {
+    pub fn arm_cycle(&mut self, bus: &mut Bus) {
+        let opcode = bus.read_32(self.program_counter as usize);
+        let instruction = decode_arm_instruction(opcode);
+        self.program_counter = self.program_counter.wrapping_add(4);
+        self.run_arm_instruction(instruction, opcode, bus);
+    }
+
+    pub fn thumb_cycle(&mut self, bus: &mut Bus) {
+        let opcode = bus.read_16(self.program_counter as usize);
+        let instruction = decode_thumb_instruction(opcode);
+        self.program_counter = self.program_counter.wrapping_add(2);
+        self.run_thumb_instruction(instruction, opcode, bus);
+    }
+
+    fn run_thumb_instruction(&mut self, instruction: ThumbInstruction, opcode: u16, bus: &mut Bus) {
         match instruction {
             ThumbInstruction::SoftwareInterrupt => self.software_interrupt(opcode),
             ThumbInstruction::UnconditionalBranch => self.unconditional_branch(opcode),
@@ -116,8 +142,14 @@ impl Cpu {
     }
 
     fn software_interrupt(&mut self, opcode: u16) {
-        let _value = opcode & 0x00FF;
-        todo!();
+        const SOFTWARE_INTERRUPT_ADDRESS: u32 = 0x0000_0008;
+        let _value = opcode & 0x00FF; // value isn't used here
+        self.link_register = self.program_counter;
+        self.saved_program_status_register = self.current_program_status_register;
+        self.program_counter = SOFTWARE_INTERRUPT_ADDRESS;
+        self.mode = CpuMode::Arm;
+        self.saved_program_status_register
+            .set_mode(Mode::Supervisor);
     }
 
     fn unconditional_branch(&mut self, opcode: u16) {
@@ -133,22 +165,147 @@ impl Cpu {
         const SIGNED_OFFSET_MASK: u16 = 0x00FF;
         let conditions = (opcode & CONDITIONS_MASK) >> CONDITIONS_SHIFT;
         let offset = ((opcode & SIGNED_OFFSET_MASK) as i8) << 1;
-        let branch = check_conditions(conditions.truncate());
+        let branch = self.check_conditions(conditions);
         if branch {
             self.program_counter = self.program_counter.wrapping_add_signed(i32::from(offset));
         }
     }
 
-    fn multiple_loadstore(&mut self, opcode: u16, _bus: &mut Bus) {
+    fn check_conditions(&self, conditions: u16) -> bool {
+        match conditions {
+            0b0000 => self.current_program_status_register.get_zero(),
+            0b0001 => !self.current_program_status_register.get_zero(),
+            0b0010 => self.current_program_status_register.get_carry(),
+            0b0011 => !self.current_program_status_register.get_carry(),
+            0b0100 => self.current_program_status_register.get_negative(),
+            0b0101 => !self.current_program_status_register.get_negative(),
+            0b0110 => self.current_program_status_register.get_overflow(),
+            0b0111 => !self.current_program_status_register.get_overflow(),
+            0b1000 => {
+                self.current_program_status_register.get_carry()
+                    & !self.current_program_status_register.get_zero()
+            }
+            0b1001 => {
+                !self.current_program_status_register.get_carry()
+                    | self.current_program_status_register.get_zero()
+            }
+            0b1010 => {
+                (self.current_program_status_register.get_negative()
+                    & self.current_program_status_register.get_overflow())
+                    | (!self.current_program_status_register.get_negative()
+                        & !self.current_program_status_register.get_overflow())
+            }
+            0b1011 => {
+                (self.current_program_status_register.get_negative()
+                    & !self.current_program_status_register.get_overflow())
+                    | (!self.current_program_status_register.get_negative()
+                        & self.current_program_status_register.get_overflow())
+            }
+            0b1100 => {
+                !self.current_program_status_register.get_zero()
+                    & ((self.current_program_status_register.get_negative()
+                        & self.current_program_status_register.get_overflow())
+                        | (!self.current_program_status_register.get_negative()
+                            & !self.current_program_status_register.get_overflow()))
+            }
+            0b1101 => {
+                self.current_program_status_register.get_zero()
+                    & ((self.current_program_status_register.get_negative()
+                        & self.current_program_status_register.get_overflow())
+                        | (!self.current_program_status_register.get_negative()
+                            & !self.current_program_status_register.get_overflow()))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn multiple_loadstore(&mut self, opcode: u16, bus: &mut Bus) {
         const LOAD_STORE_MASK: u16 = 0x0800;
-        const LOAD_STORE_SHIFT: usize = 11;
         const BASE_REGISTER_MASK: u16 = 0x0700;
         const BASE_REGISTER_SHIFT: usize = 8;
-        const R_LIST_MASK: u16 = 0x00FF;
-        let _load = (opcode & LOAD_STORE_MASK) >> LOAD_STORE_SHIFT == 0x01;
-        let _base_register = (opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT;
-        let _r_list = opcode & R_LIST_MASK;
-        todo!();
+        const REGISTER_LIST_MASK: u16 = 0x00FF;
+        let load = opcode & LOAD_STORE_MASK > 0;
+        let base_register = (opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT;
+        let register_list = opcode & REGISTER_LIST_MASK;
+        if load {
+            self.multiple_load(base_register, register_list, bus);
+        } else {
+            self.multiple_store(base_register, register_list, bus);
+        }
+    }
+
+    fn multiple_load(&mut self, base_register: u16, register_list: u16, bus: &mut Bus) {
+        let mut address = self.get_register(base_register) as usize;
+        if register_list & 0x01 == 0x01 {
+            address = address.wrapping_sub(4);
+            self.r00 = bus.read_32(address);
+        }
+        if register_list & 0x02 == 0x02 {
+            address = address.wrapping_sub(4);
+            self.r01 = bus.read_32(address);
+        }
+        if register_list & 0x04 == 0x04 {
+            address = address.wrapping_sub(4);
+            self.r02 = bus.read_32(address);
+        }
+        if register_list & 0x08 == 0x08 {
+            address = address.wrapping_sub(4);
+            self.r03 = bus.read_32(address);
+        }
+        if register_list & 0x10 == 0x10 {
+            address = address.wrapping_sub(4);
+            self.r04 = bus.read_32(address);
+        }
+        if register_list & 0x20 == 0x20 {
+            address = address.wrapping_sub(4);
+            self.r05 = bus.read_32(address);
+        }
+        if register_list & 0x40 == 0x40 {
+            address = address.wrapping_sub(4);
+            self.r06 = bus.read_32(address);
+        }
+        if register_list & 0x80 == 0x80 {
+            address = address.wrapping_sub(4);
+            self.r07 = bus.read_32(address);
+        }
+        self.store(address as u32, base_register);
+    }
+
+    fn multiple_store(&mut self, base_register: u16, register_list: u16, bus: &mut Bus) {
+        let mut address = self.get_register(base_register) as usize;
+        if register_list & 0x01 == 0x01 {
+            bus.write_32(address, self.r00);
+            address = address.wrapping_add(4);
+        }
+        if register_list & 0x02 == 0x02 {
+            bus.write_32(address, self.r01);
+            address = address.wrapping_add(4);
+        }
+        if register_list & 0x04 == 0x04 {
+            bus.write_32(address, self.r02);
+            address = address.wrapping_add(4);
+        }
+        if register_list & 0x08 == 0x08 {
+            bus.write_32(address, self.r03);
+            address = address.wrapping_add(4);
+        }
+        if register_list & 0x10 == 0x10 {
+            bus.write_32(address, self.r04);
+            address = address.wrapping_add(4);
+        }
+        if register_list & 0x20 == 0x20 {
+            bus.write_32(address, self.r05);
+            address = address.wrapping_add(4);
+        }
+        if register_list & 0x40 == 0x40 {
+            bus.write_32(address, self.r06);
+            address = address.wrapping_add(4);
+        }
+        if register_list & 0x80 == 0x80 {
+            bus.write_32(address, self.r07);
+            address = address.wrapping_add(4);
+        }
+        self.store(address as u32, base_register);
     }
 
     fn long_branch_with_link(&mut self, opcode: u16) {
@@ -184,40 +341,40 @@ impl Cpu {
         const LOAD_STORE_SHIFT: usize = 11;
         const PC_LR_MASK: u16 = 0x0100;
         const PC_LR_SHIFT: usize = 8;
-        const R_LIST_MASK: u16 = 0x00FF;
+        const REGISTER_LIST_MASK: u16 = 0x00FF;
         let load = (opcode & LOAD_STORE_MASK) >> LOAD_STORE_SHIFT == 0x01;
         let pc_lr = (opcode & PC_LR_MASK) >> PC_LR_SHIFT == 0x01;
-        let r_list = opcode & R_LIST_MASK;
+        let register_list = opcode & REGISTER_LIST_MASK;
         if load {
-            self.pop_registers(r_list, pc_lr, bus);
+            self.pop_registers(register_list, pc_lr, bus);
         } else {
-            self.push_registers(r_list, pc_lr, bus);
+            self.push_registers(register_list, pc_lr, bus);
         }
     }
 
-    fn pop_registers(&mut self, r_list: u16, pc_lr: bool, bus: &mut Bus) {
-        if r_list & 0x01 == 0x01 {
+    fn pop_registers(&mut self, register_list: u16, pc_lr: bool, bus: &mut Bus) {
+        if register_list & 0x01 == 0x01 {
             self.r00 = self.pop(bus);
         }
-        if r_list & 0x02 == 0x02 {
+        if register_list & 0x02 == 0x02 {
             self.r01 = self.pop(bus);
         }
-        if r_list & 0x04 == 0x04 {
+        if register_list & 0x04 == 0x04 {
             self.r02 = self.pop(bus);
         }
-        if r_list & 0x08 == 0x08 {
+        if register_list & 0x08 == 0x08 {
             self.r03 = self.pop(bus);
         }
-        if r_list & 0x10 == 0x10 {
+        if register_list & 0x10 == 0x10 {
             self.r04 = self.pop(bus);
         }
-        if r_list & 0x20 == 0x20 {
+        if register_list & 0x20 == 0x20 {
             self.r05 = self.pop(bus);
         }
-        if r_list & 0x40 == 0x40 {
+        if register_list & 0x40 == 0x40 {
             self.r06 = self.pop(bus);
         }
-        if r_list & 0x80 == 0x80 {
+        if register_list & 0x80 == 0x80 {
             self.r07 = self.pop(bus);
         }
         if pc_lr {
@@ -225,32 +382,32 @@ impl Cpu {
         }
     }
 
-    fn push_registers(&mut self, r_list: u16, pc_lr: bool, bus: &mut Bus) {
+    fn push_registers(&mut self, register_list: u16, pc_lr: bool, bus: &mut Bus) {
         if pc_lr {
             self.push(self.link_register, bus);
         }
-        if r_list & 0x80 == 0x80 {
+        if register_list & 0x80 == 0x80 {
             self.push(self.r07, bus);
         }
-        if r_list & 0x40 == 0x40 {
+        if register_list & 0x40 == 0x40 {
             self.push(self.r06, bus);
         }
-        if r_list & 0x20 == 0x20 {
+        if register_list & 0x20 == 0x20 {
             self.push(self.r05, bus);
         }
-        if r_list & 0x10 == 0x10 {
+        if register_list & 0x10 == 0x10 {
             self.push(self.r04, bus);
         }
-        if r_list & 0x08 == 0x08 {
+        if register_list & 0x08 == 0x08 {
             self.push(self.r03, bus);
         }
-        if r_list & 0x04 == 0x04 {
+        if register_list & 0x04 == 0x04 {
             self.push(self.r02, bus);
         }
-        if r_list & 0x02 == 0x02 {
+        if register_list & 0x02 == 0x02 {
             self.push(self.r01, bus);
         }
-        if r_list & 0x01 == 0x01 {
+        if register_list & 0x01 == 0x01 {
             self.push(self.r00, bus);
         }
     }
@@ -453,70 +610,93 @@ impl Cpu {
     fn hi_register_operations_branch_exchange(&mut self, opcode: u16) {
         const OPCODE_MASK: u16 = 0x0300;
         const OPCODE_SHIFT: usize = 8;
-        const H1_MASK: u16 = 0x0080;
-        const H1_SHIFT: usize = 7;
-        const H2_MASK: u16 = 0x0040;
-        const H2_SHIFT: usize = 6;
+        const H1_MASK: u16 = 0x0800;
+        const H2_MASK: u16 = 0x0400;
         const SOURCE_REGISTER_MASK: u16 = 0x0038;
         const SOURCE_REGISTER_SHIFT: usize = 3;
         const DESTINATION_REGISTER_MASK: u16 = 0x0007;
         let sub_opcode = (opcode & OPCODE_MASK) >> OPCODE_SHIFT;
-        let h1 = (opcode & H1_MASK) >> H1_SHIFT;
-        let h2 = (opcode & H2_MASK) >> H2_SHIFT;
+        let hi1 = opcode & H1_MASK > 0;
+        let hi2 = opcode & H2_MASK > 0;
         let source_register = (opcode & SOURCE_REGISTER_MASK) >> SOURCE_REGISTER_SHIFT;
         let destination_register = opcode & DESTINATION_REGISTER_MASK;
         match sub_opcode {
-            0b00 => self.hi_register_operations_branch_exchange_add(
-                destination_register | h1 << 3,
-                source_register | h2 << 3,
-            ),
-            0b01 => self.hi_register_operations_branch_exchange_cmp(
-                destination_register | h1 << 3,
-                source_register | h2 << 3,
-            ),
-            0b10 => self.hi_register_operations_branch_exchange_mov(
-                destination_register | h1 << 3,
-                source_register | h2 << 3,
-            ),
-            0b11 => self.hi_register_operations_branch_exchange_bx(source_register | h2 << 3),
+            0b00 => self.hi_register_add(hi1, hi2, source_register, destination_register),
+            0b01 => self.hi_register_cmp(hi1, hi2, source_register, destination_register),
+            0b10 => self.hi_register_mov(hi1, hi2, source_register, destination_register),
+            0b11 => self.hi_register_bx(hi2, source_register),
             _ => unreachable!(),
         }
     }
 
-    fn hi_register_operations_branch_exchange_add(
+    fn hi_register_add(
         &mut self,
-        destination_register: u16,
+        h1: bool,
+        h2: bool,
         source_register: u16,
+        destination_register: u16,
     ) {
-        let value = self
-            .get_register(destination_register)
-            .wrapping_add(self.get_register(source_register));
-        self.store(value, destination_register);
+        let dest = if h1 {
+            destination_register | 0x08
+        } else {
+            destination_register
+        };
+        let src = if h2 {
+            source_register | 0x08
+        } else {
+            source_register
+        };
+        let value = self.get_register(dest).wrapping_add(self.get_register(src));
+        self.store(value, dest);
     }
 
-    fn hi_register_operations_branch_exchange_cmp(
+    fn hi_register_cmp(
         &mut self,
-        destination_register: u16,
+        h1: bool,
+        h2: bool,
         source_register: u16,
+        destination_register: u16,
     ) {
-        self.test_sub(destination_register, source_register);
+        let dest = if h1 {
+            destination_register | 0x08
+        } else {
+            destination_register
+        };
+        let src = if h2 {
+            source_register | 0x08
+        } else {
+            source_register
+        };
+        self.test_sub(dest, src);
     }
 
     fn hi_register_operations_branch_exchange_mov(
         &mut self,
+        h1: bool,
+        h2: bool,
         destination_register: u16,
         source_register: u16,
     ) {
-        self.store(self.get_register(source_register), destination_register);
+        let dest = if h1 {
+            destination_register | 0x08
+        } else {
+            destination_register
+        };
+        let src = if h2 {
+            source_register | 0x08
+        } else {
+            source_register
+        };
+        self.store(self.get_register(src), dest);
     }
 
-    fn hi_register_operations_branch_exchange_bx(&mut self, source_register: u16) {
-        let value = self.get_register(source_register);
-        self.program_counter = value & 0xFFFF_FFFE; // remove last bit for alignment
-        if value & 0x01 == 0x00 {
-            // last bit determines thumb vs arm mode
-            todo!(); // switch to arm mode
-        }
+    fn hi_register_bx(&mut self, h: bool, register: u16) {
+        let r = if h { register | 0x08 } else { register };
+        self.mode = match self.get_register(r) & 0x01 == 0x01 {
+            true => CpuMode::Thumb,
+            false => CpuMode::Arm,
+        };
+        self.program_counter = self.get_register(r) & 0xFE;
     }
 
     fn alu_operations(&mut self, opcode: u16) {
@@ -773,7 +953,7 @@ impl Cpu {
     }
 }
 
-fn decode_instruction(opcode: u16) -> ThumbInstruction {
+fn decode_thumb_instruction(opcode: u16) -> ThumbInstruction {
     match () {
         _ if is_software_interrupt(opcode) => ThumbInstruction::SoftwareInterrupt,
         _ if is_unconditional_branch(opcode) => ThumbInstruction::UnconditionalBranch,
@@ -920,10 +1100,6 @@ fn is_move_shifted_register(opcode: u16) -> bool {
     const MASK: u16 = 0xE000;
     const MOVE_SHIFTED_REGISTER: u16 = 0x0000;
     opcode & MASK == MOVE_SHIFTED_REGISTER
-}
-
-fn check_conditions(_conditions: u8) -> bool {
-    todo!();
 }
 
 trait Extendable {
