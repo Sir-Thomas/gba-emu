@@ -44,7 +44,7 @@ impl GbaApp {
             TextureOptions::NEAREST,
         );
 
-        gba.set_r00(0xFFFF);
+        gba.load_rom();
 
         Self {
             gba,
@@ -82,7 +82,7 @@ impl GbaApp {
                 self.display_texture.set(image, TextureOptions::NEAREST);
             }
             let (opcode, instruction) = self.gba.next_instruction();
-            ui.label(format!("Next Instruction: {opcode:#06X} {instruction:?}"));
+            ui.label(format!("Next Instruction: {opcode:#010X} {instruction:?}"));
             // if ui.add(Button::new("Insert opcode")).clicked() {
             // if let Ok(value) = opcode.parse() {
             // self.gba.insert_opcode(value);

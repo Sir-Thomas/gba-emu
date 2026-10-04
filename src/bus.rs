@@ -9,6 +9,7 @@ const IO_REGISTERS_SIZE: usize = 0x03FF;
 const PALETTE_RAM_SIZE: usize = 0x0400;
 const VRAM_SIZE: usize = 0x0001_8000;
 const OAM_SIZE: usize = 0x0400;
+const GAME_PAK_SIZE: usize = 0x0200_0000;
 
 const BIOS_ROM_START_ADDRESS: usize = 0x0000_0000;
 const EXTERNAL_WORKING_RAM_START_ADDRESS: usize = 0x0200_0000;
@@ -17,6 +18,7 @@ const IO_REGISTERS_START_ADDRESS: usize = 0x0400_0000;
 const PALETTE_RAM_START_ADDRESS: usize = 0x0500_0000;
 const VRAM_START_ADDRESS: usize = 0x0600_0000;
 const OAM_START_ADDRESS: usize = 0x0700_0000;
+pub const GAME_PAK_START_ADDRESS: usize = 0x0800_0000;
 
 const BIOS_ROM_END_ADDRESS: usize = BIOS_ROM_START_ADDRESS + BIOS_ROM_SIZE;
 const EXTERNAL_WORKING_RAM_END_ADDRESS: usize =
@@ -27,6 +29,7 @@ const IO_REGISTERS_END_ADDRESS: usize = IO_REGISTERS_START_ADDRESS + IO_REGISTER
 const PALETTE_RAM_END_ADDRESS: usize = PALETTE_RAM_START_ADDRESS + PALETTE_RAM_SIZE;
 const VRAM_END_ADDRESS: usize = VRAM_START_ADDRESS + VRAM_SIZE;
 const OAM_END_ADDRESS: usize = OAM_START_ADDRESS + OAM_SIZE;
+const GAME_PAK_END_ADDRESS: usize = GAME_PAK_START_ADDRESS + GAME_PAK_SIZE;
 
 pub struct Bus {
     // TODO: Switch these back to Boxed arrays (do they have to be boxed?)
@@ -40,6 +43,7 @@ pub struct Bus {
     palette_ram: Vec<u8>,
     vram: Vec<u8>,
     oam: Vec<u8>,
+    game_pak: Vec<u8>,
 }
 
 impl Bus {
@@ -52,6 +56,7 @@ impl Bus {
             palette_ram: vec![0; PALETTE_RAM_SIZE],
             vram: vec![0; VRAM_SIZE],
             oam: vec![0; OAM_SIZE],
+            game_pak: vec![0; GAME_PAK_SIZE],
         }
     }
 
@@ -78,6 +83,9 @@ impl Bus {
             }
             OAM_START_ADDRESS..OAM_END_ADDRESS => {
                 self.set_oam(address, value);
+            }
+            GAME_PAK_START_ADDRESS..GAME_PAK_END_ADDRESS => {
+                self.set_game_pak(address, value);
             }
             _ => {}
         }
@@ -136,20 +144,26 @@ impl Bus {
         self.oam[index] = value;
     }
 
+    fn set_game_pak(&mut self, address: usize, value: u8) {
+        let index = address.wrapping_sub(GAME_PAK_START_ADDRESS);
+        self.game_pak[index] = value;
+    }
+
     pub fn read_8(&self, address: usize) -> u8 {
         match address {
             // General Internal Memory
-            BIOS_ROM_START_ADDRESS..BIOS_ROM_END_ADDRESS => self.get_bios(address),
+            BIOS_ROM_START_ADDRESS..BIOS_ROM_END_ADDRESS => self.bios(address),
             EXTERNAL_WORKING_RAM_START_ADDRESS..EXTERNAL_WORKING_RAM_END_ADDRESS => {
-                self.get_external_working_ram(address)
+                self.external_working_ram(address)
             }
             INTERNAL_WORKING_RAM_START_ADDRESS..INTERNAL_WORKING_RAM_END_ADDRESS => {
-                self.get_internal_working_ram(address)
+                self.internal_working_ram(address)
             }
-            IO_REGISTERS_START_ADDRESS..IO_REGISTERS_END_ADDRESS => self.get_io(address),
-            PALETTE_RAM_START_ADDRESS..PALETTE_RAM_END_ADDRESS => self.get_palette_ram(address),
-            VRAM_START_ADDRESS..VRAM_END_ADDRESS => self.get_vram(address),
-            OAM_START_ADDRESS..OAM_END_ADDRESS => self.get_oam(address),
+            IO_REGISTERS_START_ADDRESS..IO_REGISTERS_END_ADDRESS => self.io(address),
+            PALETTE_RAM_START_ADDRESS..PALETTE_RAM_END_ADDRESS => self.palette_ram(address),
+            VRAM_START_ADDRESS..VRAM_END_ADDRESS => self.vram(address),
+            OAM_START_ADDRESS..OAM_END_ADDRESS => self.oam(address),
+            GAME_PAK_START_ADDRESS..GAME_PAK_END_ADDRESS => self.game_pak(address),
             _ => 0x00,
         }
     }
@@ -164,38 +178,43 @@ impl Bus {
         u32::from_le_bytes(bytes)
     }
 
-    fn get_bios(&self, address: usize) -> u8 {
+    fn bios(&self, address: usize) -> u8 {
         let index = address.wrapping_sub(BIOS_ROM_START_ADDRESS);
         self.bios_rom[index]
     }
 
-    fn get_external_working_ram(&self, address: usize) -> u8 {
+    fn external_working_ram(&self, address: usize) -> u8 {
         let index = address.wrapping_sub(EXTERNAL_WORKING_RAM_START_ADDRESS);
         self.external_working_ram[index]
     }
 
-    fn get_internal_working_ram(&self, address: usize) -> u8 {
+    fn internal_working_ram(&self, address: usize) -> u8 {
         let index = address.wrapping_sub(INTERNAL_WORKING_RAM_START_ADDRESS);
         self.internal_working_ram[index]
     }
 
-    fn get_io(&self, address: usize) -> u8 {
+    fn io(&self, address: usize) -> u8 {
         let index = address.wrapping_sub(IO_REGISTERS_START_ADDRESS);
         self.io_registers[index]
     }
 
-    fn get_palette_ram(&self, address: usize) -> u8 {
+    fn palette_ram(&self, address: usize) -> u8 {
         let index = address.wrapping_sub(PALETTE_RAM_START_ADDRESS);
         self.palette_ram[index]
     }
 
-    fn get_vram(&self, address: usize) -> u8 {
+    fn vram(&self, address: usize) -> u8 {
         let index = address.wrapping_sub(VRAM_START_ADDRESS);
         self.vram[index]
     }
 
-    fn get_oam(&self, address: usize) -> u8 {
+    fn oam(&self, address: usize) -> u8 {
         let index = address.wrapping_sub(OAM_START_ADDRESS);
         self.oam[index]
+    }
+
+    fn game_pak(&self, address: usize) -> u8 {
+        let index = address.wrapping_sub(GAME_PAK_START_ADDRESS);
+        self.game_pak[index]
     }
 }

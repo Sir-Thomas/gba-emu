@@ -1,7 +1,7 @@
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum CpuMode {
-    Arm,
     #[default]
+    Arm,
     Thumb,
 }
 

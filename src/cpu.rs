@@ -52,6 +52,12 @@ pub struct Cpu {
 }
 
 impl Cpu {
+    pub fn new() -> Self {
+        let mut cpu = Self::default();
+        cpu.program_counter = 0x0800_0000;
+        cpu
+    }
+
     //temp
     pub const fn r00(&self) -> u32 {
         self.r00
@@ -71,10 +77,16 @@ impl Cpu {
         self.program_counter
     }
 
-    pub fn next_instruction(&self, bus: &Bus) -> (u16, ThumbInstruction) {
-        let opcode = bus.read_16(self.program_counter as usize);
-        let instruction = decode_thumb_instruction(opcode);
-        (opcode, instruction)
+    pub fn next_instruction(&self, bus: &Bus) -> (u32, Instruction) {
+        if self.current_program_status_register.state() == CpuMode::Arm {
+            let opcode = bus.read_32(self.program_counter as usize);
+            let instruction = decode_arm_instruction(opcode);
+            (opcode, Instruction::Arm(instruction))
+        } else {
+            let opcode = bus.read_16(self.program_counter as usize);
+            let instruction = decode_thumb_instruction(opcode);
+            (u32::from(opcode), Instruction::Thumb(instruction))
+        }
     }
 
     pub fn cpu_cycle(&mut self, bus: &mut Bus) {
@@ -880,6 +892,12 @@ impl Cpu {
             .set_carry(self.register(source_register) >= immediate);
         self.current_program_status_register.set_overflow(overflow);
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Instruction {
+    Arm(ArmInstruction),
+    Thumb(ThumbInstruction),
 }
 
 #[derive(Clone, Copy, Debug)]

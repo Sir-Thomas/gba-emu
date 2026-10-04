@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 
-use crate::bus::Bus;
-use crate::cpu::{Cpu, ThumbInstruction};
+use std::fs::read;
+
+use crate::bus::{Bus, GAME_PAK_START_ADDRESS};
+use crate::cpu::{Cpu, Instruction};
 use crate::ppu::Ppu;
 
 pub const DISPLAY_WIDTH: usize = 240;
@@ -17,7 +19,7 @@ impl Gba {
     pub fn new() -> Self {
         Self {
             bus: Bus::new(),
-            cpu: Cpu::default(),
+            cpu: Cpu::new(),
             ppu: Ppu::default(),
         }
     }
@@ -26,7 +28,7 @@ impl Gba {
         self.cpu.cpu_cycle(&mut self.bus);
     }
 
-    pub fn next_instruction(&self) -> (u16, ThumbInstruction) {
+    pub fn next_instruction(&self) -> (u32, Instruction) {
         self.cpu.next_instruction(&self.bus)
     }
 
@@ -56,6 +58,18 @@ impl Gba {
     //temp
     pub const fn set_r00(&mut self, value: u32) {
         self.cpu.set_r00(value);
+    }
+
+    pub fn load_rom(&mut self) {
+        let filename = "roms/suite.gba";
+        if let Ok(file) = read(filename) {
+            for (address, byte) in file.iter().enumerate() {
+                self.bus
+                    .write_8(address.wrapping_add(GAME_PAK_START_ADDRESS), *byte);
+            }
+        } else {
+            println!("Could not read ROM: {filename}");
+        }
     }
 
     pub fn draw(&mut self) -> &[u16] {
