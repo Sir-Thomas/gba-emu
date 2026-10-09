@@ -86,6 +86,6 @@ impl Gba {
     }
 
     pub fn draw(&mut self) -> &[u16] {
-        self.ppu.draw(&self.bus)
+        self.ppu.draw(&mut self.bus)
     }
 }
