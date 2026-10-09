@@ -13,7 +13,15 @@ use eframe::{NativeOptions, Result, run_native};
 fn main() -> Result {
     let options = NativeOptions::default();
 
-    let gba = Gba::new();
+    let mut args = std::env::args();
+    args.next();
+    let rom: String = args
+        .next()
+        .unwrap_or_else(|| String::from("roms/thumb.gba"));
+
+    let mut gba = Gba::new();
+    gba.load_bios();
+    gba.load_rom(&rom);
 
     run_native(
         "GBA",

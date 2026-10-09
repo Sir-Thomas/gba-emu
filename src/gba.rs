@@ -73,8 +73,17 @@ impl Gba {
         self.cpu.register(register)
     }
 
-    pub fn load_rom(&mut self) {
-        let filename = "roms/suite.gba";
+    pub fn load_bios(&mut self) {
+        if let Ok(file) = read("roms/bios.bin") {
+            for (address, byte) in file.iter().enumerate() {
+                self.bus.write_8(address, *byte);
+            }
+        } else {
+            println!("Could not find BIOS");
+        }
+    }
+
+    pub fn load_rom(&mut self, filename: &str) {
         if let Ok(file) = read(filename) {
             for (address, byte) in file.iter().enumerate() {
                 self.bus
