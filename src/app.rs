@@ -64,12 +64,15 @@ impl GbaApp {
         let frame_time = self.current_frame.duration_since(self.previous_frame);
         self.accumulator = self.accumulator.saturating_add(frame_time);
         let mut cycles = 0.0;
-        while self.accumulator > Duration::from_secs_f64(CYCLE_TIME) {
+        //while self.accumulator > Duration::from_secs_f64(CYCLE_TIME) {
+        //self.gba.cpu_cycle();
+        //self.accumulator = self
+        //.accumulator
+        //.saturating_sub(Duration::from_secs_f64(CYCLE_TIME));
+        //cycles += 1.0;
+        //}
+        for _ in (0..100) {
             self.gba.cpu_cycle();
-            self.accumulator = self
-                .accumulator
-                .saturating_sub(Duration::from_secs_f64(CYCLE_TIME));
-            cycles += 1.0;
         }
         let image = framebuffer_to_image(self.gba.draw());
         self.display_texture.set(image, TextureOptions::NEAREST);
