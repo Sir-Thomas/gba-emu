@@ -4,7 +4,7 @@ use std::fs::read;
 
 use crate::bus::{Bus, GAME_PAK_START_ADDRESS};
 use crate::cpu::{Cpu, Instruction};
-use crate::ppu::Ppu;
+use crate::ppu::{DISPSTAT, Ppu};
 
 pub const DISPLAY_WIDTH: usize = 240;
 pub const DISPLAY_HEIGHT: usize = 160;
@@ -26,6 +26,26 @@ impl Gba {
 
     pub fn cpu_cycle(&mut self) {
         self.cpu.cpu_cycle(&mut self.bus);
+    }
+
+    pub fn set_vblank(&mut self) {
+        let temp = self.bus.read_16(DISPSTAT);
+        self.bus.write_16(DISPSTAT, temp | 1);
+    }
+
+    pub fn clear_vblank(&mut self) {
+        let temp = self.bus.read_16(DISPSTAT);
+        self.bus.write_16(DISPSTAT, temp & !1);
+    }
+
+    pub fn set_hblank(&mut self) {
+        let temp = self.bus.read_16(DISPSTAT);
+        self.bus.write_16(DISPSTAT, temp | 2);
+    }
+
+    pub fn clear_hblank(&mut self) {
+        let temp = self.bus.read_16(DISPSTAT);
+        self.bus.write_16(DISPSTAT, temp & !2);
     }
 
     pub fn next_instruction(&self) -> (u32, Instruction) {

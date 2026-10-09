@@ -71,8 +71,23 @@ impl GbaApp {
         //.saturating_sub(Duration::from_secs_f64(CYCLE_TIME));
         //cycles += 1.0;
         //}
-        for _ in (0..100) {
-            self.gba.cpu_cycle();
+
+        // This gets things working for now. I'll need to move this into the ppu to run ROMs that
+        // need to update graphics mid-frame.
+        for scanline in 0..228 {
+            if scanline == 0 {
+                self.gba.clear_vblank();
+            } else if scanline == 160 {
+                self.gba.set_vblank();
+            }
+            for cycle in 0..1232 {
+                if cycle == 0 {
+                    self.gba.clear_hblank();
+                } else if cycle == 960 {
+                    self.gba.set_hblank();
+                }
+                self.gba.cpu_cycle();
+            }
         }
         let image = framebuffer_to_image(self.gba.draw());
         self.display_texture.set(image, TextureOptions::NEAREST);

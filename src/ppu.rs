@@ -8,7 +8,7 @@ const VRAM_START_ADDRESS: usize = 0x0600_0000;
 const FRAME0_START: usize = 0x0600_0000;
 const FRAME1_START: usize = 0x0600_A000;
 const DISPLAY_CONTROL: usize = 0x0400_0000;
-const DISPSTAT: usize = 0x0400_0004;
+pub const DISPSTAT: usize = 0x0400_0004;
 const PALETTE: usize = 0x0500_0000;
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -59,7 +59,6 @@ impl Ppu {
     }
 
     pub fn draw(&mut self, bus: &mut Bus) -> &Vec<u16> {
-        bus.write_16(DISPSTAT, 0);
         self.set_mode(bus);
         let vec = match self.mode {
             Mode::Mode0 => self.draw_mode3(bus),
@@ -67,7 +66,6 @@ impl Ppu {
             Mode::Mode4 => self.draw_mode4(bus),
             _ => todo!("Implement remaining display modes {:?}", self.mode),
         };
-        bus.write_16(DISPSTAT, 3);
         vec
     }
 
