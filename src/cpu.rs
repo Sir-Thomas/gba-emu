@@ -4,7 +4,7 @@ const SOFTWARE_INTERRUPT_ADDRESS: u32 = 0x0000_0008;
 
 use crate::{
     bus::Bus,
-    program_status_register::{CpuMode, Mode, ProgramStatusRegister},
+    program_status_register::{CpuMode, Mode, SavedProgramStatusRegisters},
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -119,8 +119,7 @@ pub struct Cpu {
     stack_pointer: u32,
     link_register: u32,
     program_counter: u32,
-    current_program_status_register: ProgramStatusRegister,
-    saved_program_status_register: ProgramStatusRegister,
+    program_status_register: SavedProgramStatusRegisters,
 }
 
 impl Cpu {
@@ -133,25 +132,24 @@ impl Cpu {
 
     pub fn thumb() -> Self {
         let mut cpu = Self::default();
-        cpu.current_program_status_register
-            .set_state(CpuMode::Thumb);
+        cpu.program_status_register.set_state(CpuMode::Thumb);
         cpu
     }
 
     pub const fn negative(&self) -> bool {
-        self.current_program_status_register.negative()
+        self.program_status_register.negative()
     }
 
     pub const fn zero(&self) -> bool {
-        self.current_program_status_register.zero()
+        self.program_status_register.zero()
     }
 
     pub const fn carry(&self) -> bool {
-        self.current_program_status_register.carry()
+        self.program_status_register.carry()
     }
 
     pub const fn overflow(&self) -> bool {
-        self.current_program_status_register.overflow()
+        self.program_status_register.overflow()
     }
 
     pub const fn program_counter(&self) -> u32 {
@@ -167,7 +165,7 @@ impl Cpu {
     }
 
     pub fn next_instruction(&self, bus: &Bus) -> (u32, Instruction) {
-        if self.current_program_status_register.state() == CpuMode::Arm {
+        if self.program_status_register.state() == CpuMode::Arm {
             let opcode = bus.read_32(self.program_counter as usize);
             let instruction = decode_arm_instruction(opcode);
             (opcode, Instruction::Arm(instruction))
@@ -179,7 +177,7 @@ impl Cpu {
     }
 
     pub fn cpu_cycle(&mut self, bus: &mut Bus) {
-        match self.current_program_status_register.state() {
+        match self.program_status_register.state() {
             CpuMode::Arm => self.arm_cycle(bus),
             CpuMode::Thumb => self.thumb_cycle(bus),
         }
@@ -189,7 +187,7 @@ impl Cpu {
         let opcode = bus.read_32(self.program_counter as usize);
         self.program_counter = self.program_counter.wrapping_add(4);
         if self
-            .current_program_status_register
+            .program_status_register
             .check_conditions(conditions(opcode))
         {
             let instruction = decode_arm_instruction(opcode);
@@ -201,7 +199,7 @@ impl Cpu {
         match instruction {
             ArmInstruction::DataProcessing => self.data_processing(opcode),
             ArmInstruction::PsrTransferMRS => self.psr_transfer_mrs(opcode),
-            ArmInstruction::PsrTransferMSR => self.psr_transfer_msr(opcode, bus),
+            ArmInstruction::PsrTransferMSR => self.psr_transfer_msr(opcode),
             ArmInstruction::Multiply => self.multiply(opcode),
             ArmInstruction::MultiplyLong => self.multiply_long(opcode),
             ArmInstruction::SingleDataSwap => self.single_data_swap(opcode),
@@ -226,10 +224,10 @@ impl Cpu {
     }
 
     fn set_conditions(&mut self, (negative, zero, carry, overflow): (bool, bool, bool, bool)) {
-        self.current_program_status_register.set_negative(negative);
-        self.current_program_status_register.set_zero(zero);
-        self.current_program_status_register.set_carry(carry);
-        self.current_program_status_register.set_overflow(overflow);
+        self.program_status_register.set_negative(negative);
+        self.program_status_register.set_zero(zero);
+        self.program_status_register.set_carry(carry);
+        self.program_status_register.set_overflow(overflow);
     }
 
     fn shift(&mut self, operand: u32) -> u32 {
@@ -253,11 +251,11 @@ impl Cpu {
         match shift_type {
             0b00 => {
                 if shift > 32 {
-                    self.current_program_status_register.set_carry(false);
+                    self.program_status_register.set_carry(false);
                     0
                 } else {
                     let value = self.register(source_register) << shift;
-                    self.current_program_status_register
+                    self.program_status_register
                         .set_carry(value.bit(32usize.wrapping_sub(shift as usize)));
                     if shift == 32 {
                         println!("It wasn't needed");
@@ -268,16 +266,16 @@ impl Cpu {
             }
             0b01 => {
                 if shift > 32 {
-                    self.current_program_status_register.set_carry(false);
+                    self.program_status_register.set_carry(false);
                     0
                 } else if shift == 32 {
                     // not sure if this is needed
-                    self.current_program_status_register
+                    self.program_status_register
                         .set_carry(self.register(source_register).bit(31));
                     0
                 } else {
                     // this might handle shift by 32 fine
-                    self.current_program_status_register.set_carry(
+                    self.program_status_register.set_carry(
                         self.register(source_register)
                             .bit((shift as usize).wrapping_sub(1)),
                     );
@@ -287,10 +285,10 @@ impl Cpu {
             0b10 => {
                 if shift > 31 {
                     let bit = self.register(source_register).bit(31);
-                    self.current_program_status_register.set_carry(bit);
+                    self.program_status_register.set_carry(bit);
                     if bit { 0xFFFF_FFFF } else { 0x0000_0000 }
                 } else {
-                    self.current_program_status_register.set_carry(
+                    self.program_status_register.set_carry(
                         self.register(source_register)
                             .bit((shift as usize).wrapping_sub(1)),
                     );
@@ -305,11 +303,11 @@ impl Cpu {
                     } else {
                         (s as usize).wrapping_sub(1)
                     };
-                    self.current_program_status_register
+                    self.program_status_register
                         .set_carry(self.register(source_register).bit(bit));
                     self.register(source_register).rotate_right(shift)
                 } else {
-                    self.current_program_status_register.set_carry(
+                    self.program_status_register.set_carry(
                         self.register(source_register)
                             .bit((shift as usize).wrapping_sub(1)),
                     );
@@ -352,7 +350,7 @@ impl Cpu {
         let first_operand = self.register(first_operand_register.truncate());
         let second_operand = self.parse_second_operand(immediate, opcode & SECOND_OPERAND_MASK);
         let operation = DataProcessingOperation::from(sub_opcode);
-        let carry_flag = u32::from(self.current_program_status_register.carry());
+        let carry_flag = u32::from(self.program_status_register.carry());
         let (value, carry, overflow) = match operation {
             DataProcessingOperation::And => (first_operand & second_operand, None, None),
             DataProcessingOperation::Xor => (first_operand ^ second_operand, None, None),
@@ -378,13 +376,13 @@ impl Cpu {
             DataProcessingOperation::MoveNot => (!second_operand, None, None),
         };
         if set_conditions {
-            self.current_program_status_register
+            self.program_status_register
                 .set_negative(value & 0x8000_0000 > 0);
-            self.current_program_status_register.set_zero(value == 0);
-            self.current_program_status_register
-                .set_carry(carry.unwrap_or(self.current_program_status_register.carry()));
-            self.current_program_status_register
-                .set_overflow(overflow.unwrap_or(self.current_program_status_register.overflow()));
+            self.program_status_register.set_zero(value == 0);
+            self.program_status_register
+                .set_carry(carry.unwrap_or(self.program_status_register.carry()));
+            self.program_status_register
+                .set_overflow(overflow.unwrap_or(self.program_status_register.overflow()));
         }
         if !matches!(
             operation,
@@ -401,10 +399,31 @@ impl Cpu {
         const SOURCE_PSR_BIT: u32 = 1 << 22;
         const DESTINATION_REGISTER_MASK: u32 = 0x0000_F000;
         const DESTINATION_REGISTER_SHIFT: usize = 12;
-        todo!("PSR Transfer MRS {opcode:#010X}");
+        let saved = opcode & SOURCE_PSR_BIT > 0;
+        let destination_register =
+            (opcode & DESTINATION_REGISTER_MASK) >> DESTINATION_REGISTER_SHIFT;
+        if !saved {
+            self.set_register(
+                destination_register.truncate(),
+                self.program_status_register.current(),
+            );
+            return;
+        }
+        let value = match self.program_status_register.mode() {
+            Mode::Fiq => self.program_status_register.fiq(),
+            Mode::Irq => self.program_status_register.irq(),
+            Mode::Abort => self.program_status_register.abort(),
+            Mode::Undefined => self.program_status_register.undefined(),
+            Mode::Supervisor => self.program_status_register.supervisor(),
+            _ => unreachable!(
+                "Invalid CPU mode for MRS: {:?}",
+                self.program_status_register.mode()
+            ),
+        };
+        self.set_register(destination_register.truncate(), value);
     }
 
-    fn psr_transfer_msr(&mut self, opcode: u32, _bus: &Bus) {
+    fn psr_transfer_msr(&mut self, opcode: u32) {
         const IMMEDIATE_VALUE_BIT: u32 = 1 << 25;
         const SOURCE_PSR_BIT: u32 = 1 << 22;
         const ROTATE_MASK: u32 = 0x0000_0F00;
@@ -412,18 +431,28 @@ impl Cpu {
         const IMMEDIATE_VALUE_MASK: u32 = 0x0000_00FF;
         const REGISTER_MASK: u32 = 0x0000_000F;
         let immediate = opcode & IMMEDIATE_VALUE_BIT > 0;
-        let stored = opcode & SOURCE_PSR_BIT > 0;
-        if stored {
-            todo!("PSR Transfer MSR - SPSR {opcode:#010X}");
-        }
-        if immediate {
+        let saved = opcode & SOURCE_PSR_BIT > 0;
+        let value = if immediate {
             let rotate = (opcode & ROTATE_MASK) >> ROTATE_SHIFT;
-            let value = (opcode & IMMEDIATE_VALUE_MASK).rotate_right(rotate.wrapping_mul(2));
-            self.current_program_status_register.set(value);
+            (opcode & IMMEDIATE_VALUE_MASK).rotate_right(rotate.wrapping_mul(2))
         } else {
             let register = opcode & REGISTER_MASK;
-            self.current_program_status_register
-                .set(self.register(register.truncate()));
+            self.register(register.truncate())
+        };
+        if !saved {
+            self.program_status_register.set(value);
+            return;
+        }
+        match self.program_status_register.mode() {
+            Mode::Fiq => self.program_status_register.set_fiq(value),
+            Mode::Irq => self.program_status_register.set_irq(value),
+            Mode::Abort => self.program_status_register.set_abort(value),
+            Mode::Undefined => self.program_status_register.set_undefined(value),
+            Mode::Supervisor => self.program_status_register.set_supervisor(value),
+            _ => unreachable!(
+                "Invalid CPU mode for MSR: {:?}",
+                self.program_status_register.mode()
+            ),
         }
     }
 
@@ -446,10 +475,9 @@ impl Cpu {
         let address = self.register(register.truncate());
         let thumb = address & THUMB_MODE_BIT > 0;
         if thumb {
-            self.current_program_status_register
-                .set_state(CpuMode::Thumb);
+            self.program_status_register.set_state(CpuMode::Thumb);
         } else {
-            self.current_program_status_register.set_state(CpuMode::Arm);
+            self.program_status_register.set_state(CpuMode::Arm);
         }
         self.program_counter = address & !1;
     }
@@ -718,10 +746,10 @@ impl Cpu {
 
     fn arm_software_interrupt(&mut self) {
         self.link_register = self.program_counter;
-        self.saved_program_status_register = self.current_program_status_register;
+        self.program_status_register
+            .set_supervisor(self.program_status_register.current());
         self.program_counter = SOFTWARE_INTERRUPT_ADDRESS;
-        self.current_program_status_register
-            .set_mode(Mode::Supervisor);
+        self.program_status_register.set_mode(Mode::Supervisor);
     }
 
     pub fn thumb_cycle(&mut self, bus: &mut Bus) {
@@ -766,13 +794,13 @@ impl Cpu {
         }
     }
 
-    const fn thumb_software_interrupt(&mut self) {
+    fn thumb_software_interrupt(&mut self) {
         self.link_register = self.program_counter;
-        self.saved_program_status_register = self.current_program_status_register;
+        self.program_status_register
+            .set_supervisor(self.program_status_register.current());
         self.program_counter = SOFTWARE_INTERRUPT_ADDRESS;
-        self.current_program_status_register.set_state(CpuMode::Arm);
-        self.current_program_status_register
-            .set_mode(Mode::Supervisor);
+        self.program_status_register.set_state(CpuMode::Arm);
+        self.program_status_register.set_mode(Mode::Supervisor);
     }
 
     fn unconditional_branch(&mut self, opcode: u16) {
@@ -789,7 +817,7 @@ impl Cpu {
         let conditions = (opcode & CONDITIONS_MASK) >> CONDITIONS_SHIFT;
         let offset = ((opcode & SIGNED_OFFSET_MASK) as i8) << 1;
         let branch = self
-            .current_program_status_register
+            .program_status_register
             .check_conditions(conditions.truncate());
         if branch {
             self.program_counter = self.register(15).wrapping_add_signed(i32::from(offset));
@@ -1183,7 +1211,7 @@ impl Cpu {
         } else {
             CpuMode::Arm
         };
-        self.current_program_status_register.set_state(mode);
+        self.program_status_register.set_state(mode);
         self.program_counter = self.register(r) & !3;
     }
 
@@ -1208,11 +1236,11 @@ impl Cpu {
             0x05 => self
                 .register(destination_register)
                 .wrapping_add(self.register(source_register))
-                .wrapping_add(u32::from(self.current_program_status_register.carry())),
+                .wrapping_add(u32::from(self.program_status_register.carry())),
             0x06 => self
                 .register(destination_register)
                 .wrapping_sub(self.register(source_register))
-                .wrapping_sub(u32::from(!self.current_program_status_register.carry())),
+                .wrapping_sub(u32::from(!self.program_status_register.carry())),
             0x07 => self.ror(destination_register, source_register),
             0x08 => {
                 self.test_and(destination_register, source_register);
@@ -1345,7 +1373,7 @@ impl Cpu {
             13 => self.stack_pointer,
             14 => self.link_register,
             15 => {
-                if self.current_program_status_register.state() == CpuMode::Arm {
+                if self.program_status_register.state() == CpuMode::Arm {
                     self.program_counter.wrapping_add(4)
                 } else {
                     self.program_counter.wrapping_add(2)
@@ -1380,9 +1408,8 @@ impl Cpu {
     fn ror(&mut self, destination_register: u16, source_register: u16) -> u32 {
         let mut rotated = self.register(destination_register);
         for _ in 0..self.register(source_register) {
-            let temp = u32::from(self.current_program_status_register.carry());
-            self.current_program_status_register
-                .set_carry(rotated & 0x01 > 0);
+            let temp = u32::from(self.program_status_register.carry());
+            self.program_status_register.set_carry(rotated & 0x01 > 0);
             rotated = (rotated >> 1) | (temp << 31);
         }
         rotated
@@ -1390,10 +1417,9 @@ impl Cpu {
 
     fn test_and(&mut self, source_register: u16, destination_register: u16) {
         let temp = self.register(source_register) & self.register(destination_register);
-        self.current_program_status_register
+        self.program_status_register
             .set_negative(temp & 0x8000_0000 == 0x8000_0000);
-        self.current_program_status_register
-            .set_zero(temp == 0x0000_0000);
+        self.program_status_register.set_zero(temp == 0x0000_0000);
     }
 
     fn test_add(&mut self, source_register: u16, destination_register: u16) {
@@ -1404,12 +1430,11 @@ impl Cpu {
             .register(source_register)
             .cast_signed()
             .overflowing_add(self.register(destination_register).cast_signed());
-        self.current_program_status_register
+        self.program_status_register
             .set_negative(temp & 0x8000_0000 == 0x8000_0000);
-        self.current_program_status_register
-            .set_zero(temp == 0x0000_0000);
-        self.current_program_status_register.set_carry(carry);
-        self.current_program_status_register.set_overflow(overflow);
+        self.program_status_register.set_zero(temp == 0x0000_0000);
+        self.program_status_register.set_carry(carry);
+        self.program_status_register.set_overflow(overflow);
     }
 
     fn test_sub(&mut self, source_register: u16, destination_register: u16) {
@@ -1420,12 +1445,11 @@ impl Cpu {
             .register(source_register)
             .cast_signed()
             .overflowing_sub(self.register(destination_register).cast_signed());
-        self.current_program_status_register
+        self.program_status_register
             .set_negative(temp & 0x8000_0000 == 0x8000_0000);
-        self.current_program_status_register
-            .set_zero(temp == 0x0000_0000);
-        self.current_program_status_register.set_carry(!borrow);
-        self.current_program_status_register.set_overflow(overflow);
+        self.program_status_register.set_zero(temp == 0x0000_0000);
+        self.program_status_register.set_carry(!borrow);
+        self.program_status_register.set_overflow(overflow);
     }
 
     fn test_cmp(&mut self, source_register: u16, immediate: u32) {
@@ -1434,12 +1458,11 @@ impl Cpu {
             .register(source_register)
             .cast_signed()
             .overflowing_sub(immediate.cast_signed());
-        self.current_program_status_register
+        self.program_status_register
             .set_negative(temp & 0x8000_0000 == 0x8000_0000);
-        self.current_program_status_register
-            .set_zero(temp == 0x0000_0000);
-        self.current_program_status_register.set_carry(!borrow);
-        self.current_program_status_register.set_overflow(overflow);
+        self.program_status_register.set_zero(temp == 0x0000_0000);
+        self.program_status_register.set_carry(!borrow);
+        self.program_status_register.set_overflow(overflow);
     }
 }
 

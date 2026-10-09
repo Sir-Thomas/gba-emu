@@ -101,87 +101,147 @@ impl ProgramStatusRegister {
     pub fn set(&mut self, value: u32) {
         *self = value.into();
     }
+}
 
-    pub const fn set_negative(&mut self, state: bool) {
-        self.negative = state;
+#[derive(Default)]
+pub struct SavedProgramStatusRegisters {
+    current: ProgramStatusRegister,
+    fiq: ProgramStatusRegister,
+    irq: ProgramStatusRegister,
+    supervisor: ProgramStatusRegister,
+    abort: ProgramStatusRegister,
+    undefined: ProgramStatusRegister,
+}
+
+impl SavedProgramStatusRegisters {
+    pub fn set(&mut self, value: u32) {
+        self.current.set(value);
     }
 
-    pub const fn negative(self) -> bool {
-        self.negative
+    pub fn set_fiq(&mut self, value: u32) {
+        self.fiq.set(value);
+    }
+
+    pub fn set_irq(&mut self, value: u32) {
+        self.irq.set(value);
+    }
+
+    pub fn set_supervisor(&mut self, value: u32) {
+        self.supervisor.set(value);
+    }
+
+    pub fn set_abort(&mut self, value: u32) {
+        self.abort.set(value);
+    }
+
+    pub fn set_undefined(&mut self, value: u32) {
+        self.undefined.set(value);
+    }
+
+    pub fn current(&self) -> u32 {
+        self.current.into()
+    }
+
+    pub fn fiq(&self) -> u32 {
+        self.fiq.into()
+    }
+
+    pub fn irq(&self) -> u32 {
+        self.irq.into()
+    }
+
+    pub fn supervisor(&self) -> u32 {
+        self.supervisor.into()
+    }
+
+    pub fn abort(&self) -> u32 {
+        self.abort.into()
+    }
+
+    pub fn undefined(&self) -> u32 {
+        self.undefined.into()
+    }
+
+    pub const fn set_negative(&mut self, state: bool) {
+        self.current.negative = state;
+    }
+
+    pub const fn negative(&self) -> bool {
+        self.current.negative
     }
 
     pub const fn set_zero(&mut self, state: bool) {
-        self.zero = state;
+        self.current.zero = state;
     }
 
-    pub const fn zero(self) -> bool {
-        self.zero
+    pub const fn zero(&self) -> bool {
+        self.current.zero
     }
 
     pub const fn set_carry(&mut self, state: bool) {
-        self.carry = state;
+        self.current.carry = state;
     }
 
-    pub const fn carry(self) -> bool {
-        self.carry
+    pub const fn carry(&self) -> bool {
+        self.current.carry
     }
 
     pub const fn set_overflow(&mut self, state: bool) {
-        self.overflow = state;
+        self.current.overflow = state;
     }
 
-    pub const fn overflow(self) -> bool {
-        self.overflow
+    pub const fn overflow(&self) -> bool {
+        self.current.overflow
     }
 
     pub const fn set_irq_disable(&mut self, state: bool) {
-        self.irq_disable = state;
+        self.current.irq_disable = state;
     }
 
-    pub const fn irq_disable(self) -> bool {
-        self.irq_disable
+    pub const fn irq_disable(&self) -> bool {
+        self.current.irq_disable
     }
 
     pub const fn set_fiq_disable(&mut self, state: bool) {
-        self.fiq_disable = state;
+        self.current.fiq_disable = state;
     }
 
-    pub const fn fiq_disable(self) -> bool {
-        self.fiq_disable
+    pub const fn fiq_disable(&self) -> bool {
+        self.current.fiq_disable
     }
 
     pub const fn set_state(&mut self, state: CpuMode) {
-        self.state = state;
+        self.current.state = state;
     }
 
-    pub const fn state(self) -> CpuMode {
-        self.state
+    pub const fn state(&self) -> CpuMode {
+        self.current.state
     }
 
     pub const fn set_mode(&mut self, mode: Mode) {
-        self.mode_bits = mode;
+        self.current.mode_bits = mode;
     }
 
-    pub const fn mode(self) -> Mode {
-        self.mode_bits
+    pub const fn mode(&self) -> Mode {
+        self.current.mode_bits
     }
 
     pub fn check_conditions(&self, conditions: u8) -> bool {
         match conditions {
-            0b0000 => self.zero,
-            0b0001 => !self.zero,
-            0b0010 => self.carry,
-            0b0011 => !self.carry,
-            0b0100 => self.negative,
-            0b0101 => !self.negative,
-            0b0110 => self.overflow,
-            0b0111 => !self.overflow,
-            0b1000 => self.carry && !self.zero,
-            0b1001 => !self.carry || self.zero,
-            0b1010 => self.negative == self.overflow,
-            0b1011 => self.negative != self.overflow,
-            0b1100 => !self.zero && (self.negative == self.overflow),
-            0b1101 => self.zero || (self.negative != self.overflow),
+            0b0000 => self.current.zero,
+            0b0001 => !self.current.zero,
+            0b0010 => self.current.carry,
+            0b0011 => !self.current.carry,
+            0b0100 => self.current.negative,
+            0b0101 => !self.current.negative,
+            0b0110 => self.current.overflow,
+            0b0111 => !self.current.overflow,
+            0b1000 => self.current.carry && !self.current.zero,
+            0b1001 => !self.current.carry || self.current.zero,
+            0b1010 => self.current.negative == self.current.overflow,
+            0b1011 => self.current.negative != self.current.overflow,
+            0b1100 => !self.current.zero && (self.current.negative == self.current.overflow),
+            0b1101 => self.current.zero || (self.current.negative != self.current.overflow),
             0b1110 => true,
             _ => unreachable!("Invalid conditions: {conditions:#04X}"),
         }
