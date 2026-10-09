@@ -456,8 +456,39 @@ impl Cpu {
         }
     }
 
-    fn multiply(&self, opcode: u32) {
-        todo!("Multiply {opcode:#010X}");
+    fn multiply(&mut self, opcode: u32) {
+        const ACCUMULATE: u32 = 1 << 21;
+        const SET_CONDITION_CODE: u32 = 1 << 20;
+        const DESTINATION_REGISTER_MASK: u32 = 0x000F_0000;
+        const DESTINATION_REGISTER_SHIFT: usize = 16;
+        const SOURCE_REGISTER_N_MASK: u32 = 0x0000_F000;
+        const SOURCE_REGISTER_N_SHIFT: usize = 12;
+        const SOURCE_REGISTER_S_MASK: u32 = 0x0000_0F00;
+        const SOURCE_REGISTER_S_SHIFT: usize = 12;
+        const SOURCE_REGISTER_M_MASK: u32 = 0x0000_000F;
+        let accumulate = opcode & ACCUMULATE > 0;
+        let set_condition_code = opcode & SET_CONDITION_CODE > 0;
+        let destination_register =
+            (opcode & DESTINATION_REGISTER_MASK) >> DESTINATION_REGISTER_SHIFT;
+        let source_register_n =
+            ((opcode & SOURCE_REGISTER_N_MASK) >> SOURCE_REGISTER_N_SHIFT).truncate();
+        let source_register_s =
+            ((opcode & SOURCE_REGISTER_S_MASK) >> SOURCE_REGISTER_S_SHIFT).truncate();
+        let source_register_m = (opcode & SOURCE_REGISTER_M_MASK).truncate();
+        let value = if accumulate {
+            self.register(source_register_m)
+                .wrapping_mul(self.register(source_register_s))
+                .wrapping_add(self.register(source_register_n))
+        } else {
+            self.register(source_register_m)
+                .wrapping_mul(self.register(source_register_s))
+        };
+        self.set_register(destination_register.truncate(), value);
+        if set_condition_code {
+            self.program_status_register.set_zero(value == 0);
+            self.program_status_register
+                .set_negative(value & 0x8000_0000 > 0);
+        }
     }
 
     fn multiply_long(&self, opcode: u32) {
