@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum CpuMode {
     #[default]
