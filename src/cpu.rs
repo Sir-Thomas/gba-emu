@@ -58,23 +58,32 @@ impl Cpu {
         cpu
     }
 
-    //temp
-    pub const fn r00(&self) -> u32 {
-        self.r00
+    pub const fn negative(&self) -> bool {
+        self.current_program_status_register.negative()
     }
 
-    //temp
-    pub const fn r01(&self) -> u32 {
-        self.r01
+    pub const fn zero(&self) -> bool {
+        self.current_program_status_register.zero()
     }
 
-    //temp
-    pub const fn set_r00(&mut self, value: u32) {
-        self.r00 = value;
+    pub const fn carry(&self) -> bool {
+        self.current_program_status_register.carry()
+    }
+
+    pub const fn overflow(&self) -> bool {
+        self.current_program_status_register.overflow()
     }
 
     pub const fn program_counter(&self) -> u32 {
         self.program_counter
+    }
+
+    pub const fn link_register(&self) -> u32 {
+        self.link_register
+    }
+
+    pub const fn stack_pointer(&self) -> u32 {
+        self.stack_pointer
     }
 
     pub fn next_instruction(&self, bus: &Bus) -> (u32, Instruction) {

@@ -37,27 +37,40 @@ impl Gba {
             .write_16(self.cpu.program_counter() as usize, value);
     }
 
+    pub const fn negative(&self) -> bool {
+        self.cpu.negative()
+    }
+
+    pub const fn zero(&self) -> bool {
+        self.cpu.zero()
+    }
+
+    pub const fn carry(&self) -> bool {
+        self.cpu.carry()
+    }
+
+    pub const fn overflow(&self) -> bool {
+        self.cpu.overflow()
+    }
+
     pub const fn program_counter(&self) -> u32 {
         self.cpu.program_counter()
+    }
+
+    pub const fn link_register(&self) -> u32 {
+        self.cpu.link_register()
+    }
+
+    pub const fn stack_pointer(&self) -> u32 {
+        self.cpu.stack_pointer()
     }
 
     pub fn rom(&self) -> u32 {
         self.bus.read_32(self.cpu.program_counter() as usize)
     }
 
-    //temp
-    pub const fn r00(&self) -> u32 {
-        self.cpu.r00()
-    }
-
-    //temp
-    pub const fn r01(&self) -> u32 {
-        self.cpu.r01()
-    }
-
-    //temp
-    pub const fn set_r00(&mut self, value: u32) {
-        self.cpu.set_r00(value);
+    pub fn register(&self, register: u16) -> u32 {
+        self.cpu.register(register)
     }
 
     pub fn load_rom(&mut self) {

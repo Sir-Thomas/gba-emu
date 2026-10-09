@@ -16,6 +16,7 @@ const CPU_FREQUENCY: f64 = 16_776_000.0; //16.776MHz (maybe should be 16.78MHz)
 const CYCLE_TIME: f64 = 1.0 / CPU_FREQUENCY;
 const FRAME_TIME_SAMPLES: usize = 60;
 
+#[derive(Debug)]
 enum Mode {
     Debug,
     Run,
@@ -44,8 +45,6 @@ impl GbaApp {
             TextureOptions::NEAREST,
         );
 
-        gba.load_rom();
-
         Self {
             gba,
             display_texture,
@@ -59,7 +58,7 @@ impl GbaApp {
         }
     }
 
-    fn run(&mut self, ui: &Ui, _frame: &mut Frame) {
+    fn run(&mut self, ui: &mut Ui, _frame: &mut Frame) {
         self.previous_frame = self.current_frame;
         self.current_frame = Instant::now();
         let frame_time = self.current_frame.duration_since(self.previous_frame);
@@ -72,17 +71,59 @@ impl GbaApp {
                 .saturating_sub(Duration::from_secs_f64(CYCLE_TIME));
             cycles += 1.0;
         }
+        let image = framebuffer_to_image(self.gba.draw());
+        self.display_texture.set(image, TextureOptions::NEAREST);
+        CentralPanel::default().show(ui, |ui| {
+            let (opcode, instruction) = self.gba.next_instruction();
+            ui.label(format!("Next Instruction: {opcode:#06X} {instruction:?}"));
+            ui.label(format!(
+                "Program Counter: {:#010X}",
+                self.gba.program_counter()
+            ));
+            ui.label(format!("Link Register: {:#010X}", self.gba.link_register()));
+            ui.label(format!("Stack Pointer: {:#010X}", self.gba.stack_pointer()));
+            ui.label(format!("R00: {:#010X}", self.gba.register(0)));
+            ui.label(format!("R01: {:#010X}", self.gba.register(1)));
+            ui.label(format!("R02: {:#010X}", self.gba.register(2)));
+            ui.label(format!("R03: {:#010X}", self.gba.register(3)));
+            ui.label(format!("R04: {:#010X}", self.gba.register(4)));
+            ui.label(format!("R05: {:#010X}", self.gba.register(5)));
+            ui.label(format!("R06: {:#010X}", self.gba.register(6)));
+            ui.label(format!("R07: {:#010X}", self.gba.register(7)));
+            ui.label(format!("R08: {:#010X}", self.gba.register(8)));
+            ui.label(format!("R09: {:#010X}", self.gba.register(9)));
+            ui.label(format!("R10: {:#010X}", self.gba.register(10)));
+            ui.label(format!("R11: {:#010X}", self.gba.register(11)));
+            ui.label(format!("R12: {:#010X}", self.gba.register(12)));
+            ui.label(format!("R13: {:#010X}", self.gba.register(13)));
+            ui.label(format!("R14: {:#010X}", self.gba.register(14)));
+            ui.label(format!("R15: {:#010X}", self.gba.register(15)));
+            ui.label(format!(
+                "N: {:?} Z: {:?} C: {:?} V: {:?}",
+                self.gba.negative(),
+                self.gba.zero(),
+                self.gba.carry(),
+                self.gba.overflow()
+            ));
+            ui.add(Image::new(&self.display_texture).fit_to_original_size(self.scale));
+        });
+        ui.request_repaint();
     }
 
     fn debug(&mut self, ui: &mut Ui, _frame: &mut Frame) {
         CentralPanel::default().show(ui, |ui| {
+            ui.label(format!("Mode: {:?}", self.mode));
             if ui.add(Button::new("advance")).clicked() {
                 self.gba.cpu_cycle();
                 let image = framebuffer_to_image(self.gba.draw());
                 self.display_texture.set(image, TextureOptions::NEAREST);
             }
+            if ui.add(Button::new("run")).clicked() {
+                self.mode = Mode::Run;
+                ui.request_repaint();
+            }
             let (opcode, instruction) = self.gba.next_instruction();
-            ui.label(format!("Next Instruction: {opcode:#010X} {instruction:?}"));
+            ui.label(format!("Next Instruction: {opcode:#06X} {instruction:?}"));
             // if ui.add(Button::new("Insert opcode")).clicked() {
             // if let Ok(value) = opcode.parse() {
             // self.gba.insert_opcode(value);
@@ -96,11 +137,34 @@ impl GbaApp {
                 self.gba.insert_opcode(value);
             }
             ui.label(format!(
-                "Program Counter: {:#06X}",
+                "Program Counter: {:#010X}",
                 self.gba.program_counter()
             ));
-            ui.label(format!("R00: {:#06X}", self.gba.r00()));
-            ui.label(format!("R01: {:#06X}", self.gba.r01()));
+            ui.label(format!("Link Register: {:#010X}", self.gba.link_register()));
+            ui.label(format!("Stack Pointer: {:#010X}", self.gba.stack_pointer()));
+            ui.label(format!("R00: {:#010X}", self.gba.register(0)));
+            ui.label(format!("R01: {:#010X}", self.gba.register(1)));
+            ui.label(format!("R02: {:#010X}", self.gba.register(2)));
+            ui.label(format!("R03: {:#010X}", self.gba.register(3)));
+            ui.label(format!("R04: {:#010X}", self.gba.register(4)));
+            ui.label(format!("R05: {:#010X}", self.gba.register(5)));
+            ui.label(format!("R06: {:#010X}", self.gba.register(6)));
+            ui.label(format!("R07: {:#010X}", self.gba.register(7)));
+            ui.label(format!("R08: {:#010X}", self.gba.register(8)));
+            ui.label(format!("R09: {:#010X}", self.gba.register(9)));
+            ui.label(format!("R10: {:#010X}", self.gba.register(10)));
+            ui.label(format!("R11: {:#010X}", self.gba.register(11)));
+            ui.label(format!("R12: {:#010X}", self.gba.register(12)));
+            ui.label(format!("R13: {:#010X}", self.gba.register(13)));
+            ui.label(format!("R14: {:#010X}", self.gba.register(14)));
+            ui.label(format!("R15: {:#010X}", self.gba.register(15)));
+            ui.label(format!(
+                "N: {:?} Z: {:?} C: {:?} V: {:?}",
+                self.gba.negative(),
+                self.gba.zero(),
+                self.gba.carry(),
+                self.gba.overflow()
+            ));
             ui.add(Image::new(&self.display_texture).fit_to_original_size(self.scale));
         });
     }
