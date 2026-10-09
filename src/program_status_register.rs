@@ -23,6 +23,21 @@ impl From<Mode> for u32 {
     }
 }
 
+impl From<u32> for Mode {
+    fn from(val: u32) -> Mode {
+        match val & 0b11111 {
+            0b10000 => Mode::User,
+            0b10001 => Mode::Fiq,
+            0b10010 => Mode::Irq,
+            0b10011 => Mode::Supervisor,
+            0b10111 => Mode::Abort,
+            0b11011 => Mode::Undefined,
+            0b11111 => Mode::System,
+            _ => unreachable!("Invalid CPU Mode {val:#010X}"),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ProgramStatusRegister {
     negative: bool,
@@ -39,31 +54,54 @@ impl From<ProgramStatusRegister> for u32 {
     fn from(val: ProgramStatusRegister) -> Self {
         let mut value = Self::from(val.mode_bits);
         if val.state == CpuMode::Thumb {
-            value |= 0x20;
+            value |= 0x0000_0020;
         }
         if val.fiq_disable {
-            value |= 0x40;
+            value |= 0x0000_0040;
         }
         if val.irq_disable {
-            value |= 0x80;
+            value |= 0x0000_0080;
         }
         if val.overflow {
-            value |= 0x1000;
+            value |= 0x1000_0000;
         }
         if val.carry {
-            value |= 0x2000;
+            value |= 0x2000_0000;
         }
         if val.zero {
-            value |= 0x4000;
+            value |= 0x4000_0000;
         }
         if val.negative {
-            value |= 0x8000;
+            value |= 0x8000_0000;
         }
         value
     }
 }
 
+impl From<u32> for ProgramStatusRegister {
+    fn from(val: u32) -> Self {
+        Self {
+            mode_bits: val.into(),
+            state: if val & 0x0000_0020 > 0 {
+                CpuMode::Thumb
+            } else {
+                CpuMode::Arm
+            },
+            fiq_disable: val & 0x0000_0040 > 0,
+            irq_disable: val & 0x0000_0080 > 0,
+            overflow: val & 0x1000_0000 > 0,
+            carry: val & 0x2000_0000 > 0,
+            zero: val & 0x4000_0000 > 0,
+            negative: val & 0x8000_0000 > 0,
+        }
+    }
+}
+
 impl ProgramStatusRegister {
+    pub fn set(&mut self, value: u32) {
+        *self = value.into();
+    }
+
     pub const fn set_negative(&mut self, state: bool) {
         self.negative = state;
     }
@@ -143,9 +181,9 @@ impl ProgramStatusRegister {
             0b1010 => self.negative == self.overflow,
             0b1011 => self.negative != self.overflow,
             0b1100 => !self.zero && (self.negative == self.overflow),
-            0b1101 => self.zero && (self.negative != self.overflow),
+            0b1101 => self.zero || (self.negative != self.overflow),
             0b1110 => true,
-            _ => unreachable!(),
+            _ => unreachable!("Invalid conditions: {conditions:#04X}"),
         }
     }
 }
