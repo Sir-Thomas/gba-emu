@@ -1,9 +1,81 @@
 #![allow(dead_code)]
 
+const SOFTWARE_INTERRUPT_ADDRESS: u32 = 0x0000_0008;
+
 use crate::{
     bus::Bus,
     program_status_register::{CpuMode, Mode, ProgramStatusRegister},
 };
+
+#[derive(Clone, Copy, Debug)]
+pub enum Instruction {
+    Arm(ArmInstruction),
+    Thumb(ThumbInstruction),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ArmInstruction {
+    DataProcessing,
+    PsrTransferMRS,
+    PsrTransferMSR,
+    Multiply,
+    MultiplyLong,
+    SingleDataSwap,
+    BranchAndExchange,
+    HalfwordDataTransferRegisterOffset,
+    HalfwordDataTransferImmediateOffset,
+    SingleDataTransfer,
+    Undefined,
+    BlockDataTransfer,
+    Branch,
+    CoprocessorDataTransfer,
+    CoprocessorDataOperation,
+    CoprocessorRegisterTransfer,
+    SoftwareInterrupt,
+}
+
+enum DataProcessingOperation {
+    And,                      // 0000
+    Xor,                      // 0001
+    Subtract,                 // 0010
+    ReverseSubtract,          // 0011
+    Add,                      // 0100
+    AddWithCarry,             // 0101
+    SubtractWithCarry,        // 0110
+    ReverseSubtractWithCarry, // 0111
+    TestAnd,                  // 1000
+    TestXor,                  // 1001
+    TestSubtract,             // 1010
+    TestAdd,                  // 1011
+    Or,                       // 1100
+    Move,                     // 1101
+    BitClear,                 // 1110
+    MoveNot,                  // 1111
+}
+
+impl From<u32> for DataProcessingOperation {
+    fn from(value: u32) -> DataProcessingOperation {
+        match value & 0x0F {
+            0x0 => DataProcessingOperation::And,
+            0x1 => DataProcessingOperation::Xor,
+            0x2 => DataProcessingOperation::Subtract,
+            0x3 => DataProcessingOperation::ReverseSubtract,
+            0x4 => DataProcessingOperation::Add,
+            0x5 => DataProcessingOperation::AddWithCarry,
+            0x6 => DataProcessingOperation::SubtractWithCarry,
+            0x7 => DataProcessingOperation::ReverseSubtractWithCarry,
+            0x8 => DataProcessingOperation::TestAnd,
+            0x9 => DataProcessingOperation::TestXor,
+            0xA => DataProcessingOperation::TestSubtract,
+            0xB => DataProcessingOperation::TestAdd,
+            0xC => DataProcessingOperation::Or,
+            0xD => DataProcessingOperation::Move,
+            0xE => DataProcessingOperation::BitClear,
+            0xF => DataProcessingOperation::MoveNot,
+            _ => unreachable!("Data Processing: Invalid Operation {value:#03X}"),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum ThumbInstruction {
@@ -55,6 +127,14 @@ impl Cpu {
     pub fn new() -> Self {
         let mut cpu = Self::default();
         cpu.program_counter = 0x0800_0000;
+        cpu.stack_pointer = 0x03007F00;
+        cpu
+    }
+
+    pub fn thumb() -> Self {
+        let mut cpu = Self::default();
+        cpu.current_program_status_register
+            .set_state(CpuMode::Thumb);
         cpu
     }
 
@@ -117,86 +197,531 @@ impl Cpu {
         }
     }
 
-    fn run_arm_instruction(&self, instruction: ArmInstruction, opcode: u32, _bus: &mut Bus) {
+    fn run_arm_instruction(&mut self, instruction: ArmInstruction, opcode: u32, bus: &mut Bus) {
         match instruction {
-            ArmInstruction::DataProcessingPsrTransfer => self.data_processing_psr_transfer(opcode),
+            ArmInstruction::DataProcessing => self.data_processing(opcode),
+            ArmInstruction::PsrTransferMRS => self.psr_transfer_mrs(opcode),
+            ArmInstruction::PsrTransferMSR => self.psr_transfer_msr(opcode, bus),
             ArmInstruction::Multiply => self.multiply(opcode),
             ArmInstruction::MultiplyLong => self.multiply_long(opcode),
             ArmInstruction::SingleDataSwap => self.single_data_swap(opcode),
             ArmInstruction::BranchAndExchange => self.branch_and_exchange(opcode),
             ArmInstruction::HalfwordDataTransferRegisterOffset => {
-                self.halfword_data_transfer_register_offset(opcode)
+                self.halfword_data_transfer_register_offset(opcode, bus)
             }
             ArmInstruction::HalfwordDataTransferImmediateOffset => {
-                self.halfword_data_transfer_immediate_offset(opcode)
+                self.halfword_data_transfer_immediate_offset(opcode, bus)
             }
-            ArmInstruction::SingleDataTransfer => self.single_data_transfer(opcode),
+            ArmInstruction::SingleDataTransfer => self.single_data_transfer(opcode, bus),
             ArmInstruction::Undefined => unreachable!(),
-            ArmInstruction::BlockDataTransfer => self.block_data_transfer(opcode),
+            ArmInstruction::BlockDataTransfer => self.block_data_transfer(opcode, bus),
             ArmInstruction::Branch => self.branch(opcode),
             ArmInstruction::CoprocessorDataTransfer => self.coprocessor_data_transfer(opcode),
             ArmInstruction::CoprocessorDataOperation => self.coprocessor_data_operation(opcode),
             ArmInstruction::CoprocessorRegisterTransfer => {
                 self.coprocessor_register_transfer(opcode)
             }
-            ArmInstruction::SoftwareInterrupt => self.arm_software_interrupt(opcode),
+            ArmInstruction::SoftwareInterrupt => self.arm_software_interrupt(),
         }
     }
 
-    fn data_processing_psr_transfer(&self, _opcode: u32) {
-        todo!("DataProcessingPsrTransfer");
+    fn set_conditions(&mut self, (negative, zero, carry, overflow): (bool, bool, bool, bool)) {
+        self.current_program_status_register.set_negative(negative);
+        self.current_program_status_register.set_zero(zero);
+        self.current_program_status_register.set_carry(carry);
+        self.current_program_status_register.set_overflow(overflow);
     }
 
-    fn multiply(&self, _opcode: u32) {
-        todo!("Multiply");
+    fn shift(&mut self, operand: u32) -> u32 {
+        const IMMEDIATE_VALUE_MASK: u32 = 0x0000_0F80;
+        const IMMEDIATE_VALUE_SHIFT: usize = 7;
+        const SHIFT_REGISTER_MASK: u32 = 0x0000_0F00;
+        const SHIFT_REGISTER_SHIFT: usize = 8;
+        const SHIFT_MASK: u32 = 0x0000_0060;
+        const SHIFT_SHIFT: usize = 5;
+        const IMMEDIATE_VALUE_BIT: u32 = 1 << 4;
+        const SOURCE_REGISTER_MASK: u32 = 0x0000_000F;
+        let shift_type = (operand & SHIFT_MASK) >> SHIFT_SHIFT;
+        let immediate = operand & IMMEDIATE_VALUE_BIT == 0;
+        let shift = if immediate {
+            (operand & IMMEDIATE_VALUE_MASK) >> IMMEDIATE_VALUE_SHIFT
+        } else {
+            let register = (operand & SHIFT_REGISTER_MASK) >> SHIFT_REGISTER_SHIFT;
+            self.register(register.truncate()) & 0x0000_00FF
+        };
+        let source_register = (operand & SOURCE_REGISTER_MASK).truncate();
+        match shift_type {
+            0b00 => {
+                if shift > 32 {
+                    self.current_program_status_register.set_carry(false);
+                    0
+                } else {
+                    let value = self.register(source_register) << shift;
+                    self.current_program_status_register
+                        .set_carry(value.bit(32usize.wrapping_sub(shift as usize)));
+                    if shift == 32 {
+                        println!("It wasn't needed");
+                        // delete code from next block if so
+                    }
+                    value
+                }
+            }
+            0b01 => {
+                if shift > 32 {
+                    self.current_program_status_register.set_carry(false);
+                    0
+                } else if shift == 32 {
+                    // not sure if this is needed
+                    self.current_program_status_register
+                        .set_carry(self.register(source_register).bit(31));
+                    0
+                } else {
+                    // this might handle shift by 32 fine
+                    self.current_program_status_register.set_carry(
+                        self.register(source_register)
+                            .bit((shift as usize).wrapping_sub(1)),
+                    );
+                    self.register(source_register) >> shift
+                }
+            }
+            0b10 => {
+                if shift > 31 {
+                    let bit = self.register(source_register).bit(31);
+                    self.current_program_status_register.set_carry(bit);
+                    if bit { 0xFFFF_FFFF } else { 0x0000_0000 }
+                } else {
+                    self.current_program_status_register.set_carry(
+                        self.register(source_register)
+                            .bit((shift as usize).wrapping_sub(1)),
+                    );
+                    (self.register(source_register).cast_signed() >> shift).cast_unsigned()
+                }
+            }
+            0b11 => {
+                if shift > 31 {
+                    let s = shift % 32;
+                    let bit = if s == 0 {
+                        31
+                    } else {
+                        (s as usize).wrapping_sub(1)
+                    };
+                    self.current_program_status_register
+                        .set_carry(self.register(source_register).bit(bit));
+                    self.register(source_register).rotate_right(shift)
+                } else {
+                    self.current_program_status_register.set_carry(
+                        self.register(source_register)
+                            .bit((shift as usize).wrapping_sub(1)),
+                    );
+                    self.register(source_register).rotate_right(shift)
+                }
+            }
+            _ => unreachable!("Invalid shift type: {shift_type:#06X}"),
+        }
     }
 
-    fn multiply_long(&self, _opcode: u32) {
-        todo!("MultiplyLong");
+    fn parse_second_operand(&mut self, immediate: bool, operand: u32) -> u32 {
+        const ROTATE_MASK: u32 = 0x0000_0F00;
+        const ROTATE_SHIFT: usize = 8;
+        const IMMEDIATE_MASK: u32 = 0x0000_00FF;
+        if immediate {
+            let rotate = ((operand & ROTATE_MASK) >> ROTATE_SHIFT).wrapping_mul(2);
+            (operand & IMMEDIATE_MASK).rotate_right(rotate)
+        } else {
+            self.shift(operand)
+        }
     }
 
-    fn single_data_swap(&self, _opcode: u32) {
-        todo!("SingleDataSwap");
+    fn data_processing(&mut self, opcode: u32) {
+        const IMMEDIATE_VALUE_BIT: u32 = 1 << 25;
+        const OPCODE_MASK: u32 = 0x01E0_0000;
+        const OPCODE_SHIFT: usize = 21;
+        const SET_CONDITIONS_BIT: u32 = 1 << 20;
+        const FIRST_OPERAND_REGISTER_MASK: u32 = 0x000F_0000;
+        const FIRST_OPERAND_REGISTER_SHIFT: usize = 16;
+        const DESTINATION_REGISTER_MASK: u32 = 0x0000_F000;
+        const DESTINATION_REGISTER_SHIFT: usize = 12;
+        const SECOND_OPERAND_MASK: u32 = 0x0000_0FFF;
+        let immediate = opcode & IMMEDIATE_VALUE_BIT > 0;
+        let sub_opcode = (opcode & OPCODE_MASK) >> OPCODE_SHIFT;
+        let set_conditions = opcode & SET_CONDITIONS_BIT > 0;
+        let destination_register =
+            (opcode & DESTINATION_REGISTER_MASK) >> DESTINATION_REGISTER_SHIFT;
+        let first_operand_register =
+            (opcode & FIRST_OPERAND_REGISTER_MASK) >> FIRST_OPERAND_REGISTER_SHIFT;
+        let first_operand = self.register(first_operand_register.truncate());
+        let second_operand = self.parse_second_operand(immediate, opcode & SECOND_OPERAND_MASK);
+        let operation = DataProcessingOperation::from(sub_opcode);
+        let carry_flag = u32::from(self.current_program_status_register.carry());
+        let (value, carry, overflow) = match operation {
+            DataProcessingOperation::And => (first_operand & second_operand, None, None),
+            DataProcessingOperation::Xor => (first_operand ^ second_operand, None, None),
+            DataProcessingOperation::Subtract => subtract(first_operand, second_operand),
+            DataProcessingOperation::ReverseSubtract => subtract(second_operand, first_operand),
+            DataProcessingOperation::Add => add(first_operand, second_operand),
+            DataProcessingOperation::AddWithCarry => {
+                add_carry(first_operand, second_operand, carry_flag)
+            }
+            DataProcessingOperation::SubtractWithCarry => {
+                sub_carry(first_operand, second_operand, carry_flag)
+            }
+            DataProcessingOperation::ReverseSubtractWithCarry => {
+                sub_carry(second_operand, first_operand, carry_flag)
+            }
+            DataProcessingOperation::TestAnd => (first_operand & second_operand, None, None),
+            DataProcessingOperation::TestXor => (first_operand ^ second_operand, None, None),
+            DataProcessingOperation::TestSubtract => subtract(first_operand, second_operand),
+            DataProcessingOperation::TestAdd => add(first_operand, second_operand),
+            DataProcessingOperation::Or => (first_operand | second_operand, None, None),
+            DataProcessingOperation::Move => (second_operand, None, None),
+            DataProcessingOperation::BitClear => (first_operand & !second_operand, None, None),
+            DataProcessingOperation::MoveNot => (!second_operand, None, None),
+        };
+        if set_conditions {
+            self.current_program_status_register
+                .set_negative(value & 0x8000_0000 > 0);
+            self.current_program_status_register.set_zero(value == 0);
+            self.current_program_status_register
+                .set_carry(carry.unwrap_or(self.current_program_status_register.carry()));
+            self.current_program_status_register
+                .set_overflow(overflow.unwrap_or(self.current_program_status_register.overflow()));
+        }
+        if !matches!(
+            operation,
+            DataProcessingOperation::TestAnd
+                | DataProcessingOperation::TestXor
+                | DataProcessingOperation::TestSubtract
+                | DataProcessingOperation::TestAdd
+        ) {
+            self.set_register(destination_register.truncate(), value);
+        }
     }
 
-    fn branch_and_exchange(&self, _opcode: u32) {
-        todo!("BranchAndExchange");
+    fn psr_transfer_mrs(&mut self, opcode: u32) {
+        const SOURCE_PSR_BIT: u32 = 1 << 22;
+        const DESTINATION_REGISTER_MASK: u32 = 0x0000_F000;
+        const DESTINATION_REGISTER_SHIFT: usize = 12;
+        todo!("PSR Transfer MRS {opcode:#010X}");
     }
 
-    fn halfword_data_transfer_register_offset(&self, _opcode: u32) {
-        todo!("HalfwordDataTransferRegisterOffset");
+    fn psr_transfer_msr(&mut self, opcode: u32, _bus: &Bus) {
+        const IMMEDIATE_VALUE_BIT: u32 = 1 << 25;
+        const SOURCE_PSR_BIT: u32 = 1 << 22;
+        const ROTATE_MASK: u32 = 0x0000_0F00;
+        const ROTATE_SHIFT: usize = 8;
+        const IMMEDIATE_VALUE_MASK: u32 = 0x0000_00FF;
+        const REGISTER_MASK: u32 = 0x0000_000F;
+        let immediate = opcode & IMMEDIATE_VALUE_BIT > 0;
+        let stored = opcode & SOURCE_PSR_BIT > 0;
+        if stored {
+            todo!("PSR Transfer MSR - SPSR {opcode:#010X}");
+        }
+        if immediate {
+            let rotate = (opcode & ROTATE_MASK) >> ROTATE_SHIFT;
+            let value = (opcode & IMMEDIATE_VALUE_MASK).rotate_right(rotate.wrapping_mul(2));
+            self.current_program_status_register.set(value);
+        } else {
+            let register = opcode & REGISTER_MASK;
+            self.current_program_status_register
+                .set(self.register(register.truncate()));
+        }
     }
 
-    fn halfword_data_transfer_immediate_offset(&self, _opcode: u32) {
-        todo!("HalfwordDataTransferImmediateOffset");
+    fn multiply(&self, opcode: u32) {
+        todo!("Multiply {opcode:#010X}");
     }
 
-    fn single_data_transfer(&self, _opcode: u32) {
-        todo!("SingleDataTransfer");
+    fn multiply_long(&self, opcode: u32) {
+        todo!("MultiplyLong {opcode:#010X}");
     }
 
-    fn block_data_transfer(&self, _opcode: u32) {
-        todo!("BlockDataTransfer");
+    fn single_data_swap(&self, opcode: u32) {
+        todo!("SingleDataSwap {opcode:#010X}");
     }
 
-    fn branch(&self, _opcode: u32) {
-        todo!("Branch");
+    fn branch_and_exchange(&mut self, opcode: u32) {
+        const REGISTER_MASK: u32 = 0x0000_000F;
+        const THUMB_MODE_BIT: u32 = 1;
+        let register = opcode & REGISTER_MASK;
+        let address = self.register(register.truncate());
+        let thumb = address & THUMB_MODE_BIT > 0;
+        if thumb {
+            self.current_program_status_register
+                .set_state(CpuMode::Thumb);
+        } else {
+            self.current_program_status_register.set_state(CpuMode::Arm);
+        }
+        self.program_counter = address & !1;
     }
 
-    fn coprocessor_data_transfer(&self, _opcode: u32) {
-        todo!("CoprocessorDataTransfer");
+    fn halfword_data_transfer_register_offset(&mut self, opcode: u32, bus: &mut Bus) {
+        const PRE_POST_INDEXING_BIT: u32 = 1 << 24;
+        const UP_DOWN_BIT: u32 = 1 << 23;
+        const WRITE_BACK_BIT: u32 = 1 << 21;
+        const LOAD_STORE_BIT: u32 = 1 << 20;
+        const BASE_REGISTER_MASK: u32 = 0x000F_0000;
+        const BASE_REGISTER_SHIFT: usize = 16;
+        const SOURCE_DESTINATION_REGISTER_MASK: u32 = 0x0000_F000;
+        const SOURCE_DESTINATION_REGISTER_SHIFT: usize = 12;
+        const SIGNED_BIT: u32 = 1 << 6;
+        const HALFWORD_BIT: u32 = 1 << 5;
+        const OFFSET_REGISTER_MASK: u32 = 0x0000_000F;
+        let pre_index = opcode & PRE_POST_INDEXING_BIT > 0;
+        let up = opcode & UP_DOWN_BIT > 0;
+        let write_back = opcode & WRITE_BACK_BIT > 0;
+        let load = opcode & LOAD_STORE_BIT > 0;
+        let base_register = ((opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT).truncate();
+        let source_destination_register = ((opcode & SOURCE_DESTINATION_REGISTER_MASK)
+            >> SOURCE_DESTINATION_REGISTER_SHIFT)
+            .truncate();
+        let signed = opcode & SIGNED_BIT > 0;
+        let halfword = opcode & HALFWORD_BIT > 0;
+        let offset_register = opcode & OFFSET_REGISTER_MASK;
+        let offset = self.register(offset_register.truncate());
+        let address = match (pre_index, up) {
+            (true, true) => self.register(base_register).wrapping_add(offset),
+            (true, false) => self.register(base_register).wrapping_sub(offset),
+            (false, _) => self.register(base_register),
+        };
+        match (write_back, pre_index, up) {
+            // docs say write back should only be used with pre-index
+            (true, false, false) => self.set_register(base_register, address.wrapping_sub(offset)),
+            (true, false, true) => self.set_register(base_register, address.wrapping_add(offset)),
+            (true, true, _) => self.set_register(base_register, address),
+            (false, _, _) => {}
+        }
+        match (halfword, load, signed) {
+            (true, true, true) => self.set_register(
+                source_destination_register,
+                bus.read_16(address as usize).sign_extend().cast_unsigned(),
+            ),
+            (true, true, false) => self.set_register(
+                source_destination_register,
+                u32::from(bus.read_16(address as usize)),
+            ),
+            (true, false, false) => bus.write_16(
+                address as usize,
+                self.register(source_destination_register).truncate(),
+            ),
+            (false, true, true) => self.set_register(
+                source_destination_register,
+                bus.read_8(address as usize).sign_extend().cast_unsigned(),
+            ),
+            (false, true, false) => self.set_register(
+                source_destination_register,
+                u32::from(bus.read_8(address as usize)),
+            ),
+            (false, false, false) => bus.write_8(
+                address as usize,
+                self.register(source_destination_register).truncate(),
+            ),
+            _ => unreachable!("Sign extend should not be used with store"),
+        }
     }
 
-    fn coprocessor_data_operation(&self, _opcode: u32) {
-        todo!("CoprocessorDataOperation");
+    fn halfword_data_transfer_immediate_offset(&mut self, opcode: u32, bus: &mut Bus) {
+        const PRE_POST_INDEXING_BIT: u32 = 1 << 24;
+        const UP_DOWN_BIT: u32 = 1 << 23;
+        const WRITE_BACK_BIT: u32 = 1 << 21;
+        const LOAD_STORE_BIT: u32 = 1 << 20;
+        const BASE_REGISTER_MASK: u32 = 0x000F_0000;
+        const BASE_REGISTER_SHIFT: usize = 16;
+        const SOURCE_DESTINATION_REGISTER_MASK: u32 = 0x0000_F000;
+        const SOURCE_DESTINATION_REGISTER_SHIFT: usize = 12;
+        const IMMEDIATE_OFFSET_HIGH_MASK: u32 = 0x0000_0F00;
+        const IMMEDIATE_OFFSET_HIGH_SHIFT: usize = 4; // leave it in the high nibble of 8 bit value
+        const SIGNED_BIT: u32 = 1 << 6;
+        const HALFWORD_BIT: u32 = 1 << 5;
+        const IMMEDIATE_OFFSET_LOW_MASK: u32 = 0x0000_000F;
+        let pre_index = opcode & PRE_POST_INDEXING_BIT > 0;
+        let up = opcode & UP_DOWN_BIT > 0;
+        let write_back = opcode & WRITE_BACK_BIT > 0;
+        let load = opcode & LOAD_STORE_BIT > 0;
+        let base_register = ((opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT).truncate();
+        let source_destination_register = ((opcode & SOURCE_DESTINATION_REGISTER_MASK)
+            >> SOURCE_DESTINATION_REGISTER_SHIFT)
+            .truncate();
+        let signed = opcode & SIGNED_BIT > 0;
+        let halfword = opcode & HALFWORD_BIT > 0;
+        let offset = ((opcode & IMMEDIATE_OFFSET_HIGH_MASK) >> IMMEDIATE_OFFSET_HIGH_SHIFT)
+            | (opcode & IMMEDIATE_OFFSET_LOW_MASK);
+        let address = match (pre_index, up) {
+            (true, true) => self.register(base_register).wrapping_add(offset),
+            (true, false) => self.register(base_register).wrapping_sub(offset),
+            (false, _) => self.register(base_register),
+        };
+        match (write_back, pre_index, up) {
+            // docs say write back should only be used with pre-index
+            (true, false, false) => self.set_register(base_register, address.wrapping_sub(offset)),
+            (true, false, true) => self.set_register(base_register, address.wrapping_add(offset)),
+            (true, true, _) => self.set_register(base_register, address),
+            (false, _, _) => {}
+        }
+        match (halfword, load, signed) {
+            (true, true, true) => self.set_register(
+                source_destination_register,
+                bus.read_16(address as usize).sign_extend().cast_unsigned(),
+            ),
+            (true, true, false) => self.set_register(
+                source_destination_register,
+                u32::from(bus.read_16(address as usize)),
+            ),
+            (true, false, false) => bus.write_16(
+                address as usize,
+                self.register(source_destination_register).truncate(),
+            ),
+            (false, true, true) => self.set_register(
+                source_destination_register,
+                bus.read_8(address as usize).sign_extend().cast_unsigned(),
+            ),
+            (false, true, false) => self.set_register(
+                source_destination_register,
+                u32::from(bus.read_8(address as usize)),
+            ),
+            (false, false, false) => bus.write_8(
+                address as usize,
+                self.register(source_destination_register).truncate(),
+            ),
+            _ => unreachable!("Sign extend should not be used with store"),
+        }
     }
 
-    fn coprocessor_register_transfer(&self, _opcode: u32) {
-        todo!("CoprocessorRegisterTransfer");
+    fn single_data_transfer(&mut self, opcode: u32, bus: &mut Bus) {
+        const IMMEDIATE_OFFSET_BIT: u32 = 1 << 25;
+        const PRE_POST_INDEXING_BIT: u32 = 1 << 24;
+        const UP_DOWN_BIT: u32 = 1 << 23;
+        const BYTE_WORD_BIT: u32 = 1 << 22;
+        const WRITE_BACK_BIT: u32 = 1 << 21;
+        const LOAD_STORE_BIT: u32 = 1 << 20;
+        const BASE_REGISTER_MASK: u32 = 0x000F_0000;
+        const BASE_REGISTER_SHIFT: usize = 16;
+        const SOURCE_DESTINATION_REGISTER_MASK: u32 = 0x0000_F000;
+        const SOURCE_DESTINATION_REGISTER_SHIFT: usize = 12;
+        const IMMEDIATE_OFFSET_MASK: u32 = 0x0000_0FFF;
+        const SHIFT_MASK: u32 = 0x0000_0FF0;
+        const SHIFT_SHIFT: usize = 4;
+        const REGISTER_MASK: u32 = 0x0000_000F;
+        let immediate = opcode & IMMEDIATE_OFFSET_BIT == 0;
+        let pre_index = opcode & PRE_POST_INDEXING_BIT > 0;
+        let up = opcode & UP_DOWN_BIT > 0;
+        let byte = opcode & BYTE_WORD_BIT > 0;
+        let write_back = opcode & WRITE_BACK_BIT > 0;
+        let load = opcode & LOAD_STORE_BIT > 0;
+        let base_register = ((opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT).truncate();
+        let source_destination_register = ((opcode & SOURCE_DESTINATION_REGISTER_MASK)
+            >> SOURCE_DESTINATION_REGISTER_SHIFT)
+            .truncate();
+        let offset = if immediate {
+            opcode & IMMEDIATE_OFFSET_MASK
+        } else {
+            self.shift(opcode & IMMEDIATE_OFFSET_MASK)
+        };
+        let address = match (pre_index, up) {
+            (true, true) => self.register(base_register).wrapping_add(offset),
+            (true, false) => self.register(base_register).wrapping_sub(offset),
+            (false, _) => self.register(base_register),
+        };
+        match (write_back, pre_index, up) {
+            // docs say write back should only be used with pre-index
+            (true, false, false) => self.set_register(base_register, address.wrapping_sub(offset)),
+            (true, false, true) => self.set_register(base_register, address.wrapping_add(offset)),
+            (true, true, _) => self.set_register(base_register, address),
+            (false, _, _) => {}
+        }
+        match (byte, load) {
+            (true, true) => self.set_register(
+                source_destination_register,
+                u32::from(bus.read_8(address as usize)),
+            ),
+            (true, false) => bus.write_8(
+                address as usize,
+                self.register(source_destination_register).truncate(),
+            ),
+            (false, true) => {
+                self.set_register(source_destination_register, bus.read_32(address as usize))
+            }
+            (false, false) => {
+                bus.write_32(address as usize, self.register(source_destination_register))
+            }
+        }
     }
 
-    fn arm_software_interrupt(&self, _opcode: u32) {
-        todo!("ArmSoftwareInterrupt");
+    fn block_data_transfer(&mut self, opcode: u32, bus: &mut Bus) {
+        // 1110 1001 0010 1101 0100 0000 0000 0011
+        const PRE_POST_INDEXING_BIT: u32 = 1 << 24;
+        const UP_DOWN_BIT: u32 = 1 << 23;
+        const PSR_FORCE_USER_BIT: u32 = 1 << 22;
+        const WRITE_BACK_BIT: u32 = 1 << 21;
+        const LOAD_STORE_BIT: u32 = 1 << 20;
+        const BASE_REGISTER_MASK: u32 = 0x000F_0000;
+        const BASE_REGISTER_SHIFT: usize = 16;
+        const REGISTER_LIST_MASK: u32 = 0x0000_FFFF;
+        let pre_index = opcode & PRE_POST_INDEXING_BIT > 0;
+        let up = opcode & UP_DOWN_BIT > 0;
+        let psr = opcode & PSR_FORCE_USER_BIT > 0;
+        if psr {
+            unimplemented!("ARM: Block Data Transfer - PSR & force user bit set");
+        }
+        let write_back = opcode & WRITE_BACK_BIT > 0;
+        let load = opcode & LOAD_STORE_BIT > 0;
+        let base_register = ((opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT).truncate();
+        let register_list = opcode & REGISTER_LIST_MASK;
+        let base_value = self.register(base_register);
+        let byte_count = register_list.count_ones().wrapping_mul(4);
+        let mut address = match (up, pre_index) {
+            (true, true) => base_value.wrapping_add(4),
+            (true, false) => base_value,
+            (false, true) => base_value.wrapping_sub(byte_count),
+            (false, false) => base_value.wrapping_sub(byte_count).wrapping_add(4),
+        };
+        for register in (0..=15).filter(|r| register_list & (1 << r) > 0) {
+            if load {
+                self.set_register(register, bus.read_32(address as usize));
+            } else {
+                bus.write_32(address as usize, self.register(register));
+            }
+            address = address.wrapping_add(4);
+        }
+        if write_back {
+            let final_address = if up {
+                base_value.wrapping_add(byte_count)
+            } else {
+                base_value.wrapping_sub(byte_count)
+            };
+            self.set_register(base_register, final_address);
+        }
+    }
+
+    fn branch(&mut self, opcode: u32) {
+        const LINK_MASK: u32 = 0x0100_0000;
+        const OFFSET_MASK: u32 = 0x00FF_FFFF;
+        let link = opcode & LINK_MASK > 0;
+        if link {
+            self.link_register = self.program_counter;
+        }
+        let offset = sign_extend_32((opcode & OFFSET_MASK) << 2, 26);
+        // + 4 for prefetch
+        self.program_counter = self.register(15).wrapping_add_signed(offset);
+    }
+
+    fn coprocessor_data_transfer(&self, opcode: u32) {
+        todo!("CoprocessorDataTransfer {opcode:#010X}");
+    }
+
+    fn coprocessor_data_operation(&self, opcode: u32) {
+        todo!("CoprocessorDataOperation {opcode:#010X}");
+    }
+
+    fn coprocessor_register_transfer(&self, opcode: u32) {
+        todo!("CoprocessorRegisterTransfer {opcode:#010X}");
+    }
+
+    fn arm_software_interrupt(&mut self) {
+        self.link_register = self.program_counter;
+        self.saved_program_status_register = self.current_program_status_register;
+        self.program_counter = SOFTWARE_INTERRUPT_ADDRESS;
+        self.current_program_status_register
+            .set_mode(Mode::Supervisor);
     }
 
     pub fn thumb_cycle(&mut self, bus: &mut Bus) {
@@ -242,7 +767,6 @@ impl Cpu {
     }
 
     const fn thumb_software_interrupt(&mut self) {
-        const SOFTWARE_INTERRUPT_ADDRESS: u32 = 0x0000_0008;
         self.link_register = self.program_counter;
         self.saved_program_status_register = self.current_program_status_register;
         self.program_counter = SOFTWARE_INTERRUPT_ADDRESS;
@@ -255,7 +779,7 @@ impl Cpu {
         // Offset is a 12 bit value, but is stored as 11 bits (lsb is dropped) because it must be halfword aligned
         const MASK: u16 = 0x07FF;
         let offset = ((opcode & MASK) << 1).sign_extend_12();
-        self.program_counter = self.program_counter.wrapping_add_signed(offset);
+        self.program_counter = self.register(15).wrapping_add_signed(offset);
     }
 
     fn conditional_branch(&mut self, opcode: u16) {
@@ -268,7 +792,7 @@ impl Cpu {
             .current_program_status_register
             .check_conditions(conditions.truncate());
         if branch {
-            self.program_counter = self.program_counter.wrapping_add_signed(i32::from(offset));
+            self.program_counter = self.register(15).wrapping_add_signed(i32::from(offset));
         }
     }
 
@@ -307,19 +831,20 @@ impl Cpu {
 
     fn long_branch_with_link(&mut self, opcode: u16) {
         const H_MASK: u16 = 0x0800;
-        const H_SHIFT: usize = 11;
         const OFFSET_MASK: u16 = 0x07FF;
-        let h = (opcode & H_MASK) >> H_SHIFT > 0;
+        let h = opcode & H_MASK > 0;
         // TODO: I think this needs to use an i32 instead of u32 for the offset. Not sure how to
         // implement that
         let offset = opcode & OFFSET_MASK;
-        if h {
+        if !h {
+            self.link_register = self
+                .register(15)
+                .wrapping_add((offset << 1).sign_extend_12().cast_unsigned() << 11);
+        } else {
             let return_address = self.program_counter;
             self.link_register = self.link_register.wrapping_add(u32::from(offset << 1));
-            self.program_counter = self.program_counter.wrapping_add(self.link_register);
-            self.link_register = return_address;
-        } else {
-            self.link_register = self.program_counter.wrapping_add(u32::from(offset) << 12);
+            self.program_counter = self.link_register;
+            self.link_register = return_address | 1;
         }
     }
 
@@ -444,7 +969,7 @@ impl Cpu {
         let address = if source {
             self.stack_pointer.wrapping_add(word)
         } else {
-            self.program_counter.wrapping_add(word)
+            self.register(15).wrapping_add(word) & !3
         };
         self.set_register(destination_register, address);
     }
@@ -564,8 +1089,7 @@ impl Cpu {
         let offset = (opcode & OFFSET_MASK) << OFFSET_SHIFT; // offset is 10 bit word aligned, so
         // it is stored as 8 bits
         // we have to clear lowest bit of program counter
-        let value = bus
-            .read_32((self.program_counter & 0xFFFF_FFFE).wrapping_add(u32::from(offset)) as usize);
+        let value = bus.read_32((self.register(15) & !3).wrapping_add(u32::from(offset)) as usize);
         self.set_register(destination_register, value);
     }
 
@@ -660,7 +1184,7 @@ impl Cpu {
             CpuMode::Arm
         };
         self.current_program_status_register.set_state(mode);
-        self.program_counter = self.register(r) & !1;
+        self.program_counter = self.register(r) & !3;
     }
 
     fn alu_operations(&mut self, opcode: u16) {
@@ -803,7 +1327,7 @@ impl Cpu {
         self.set_register(destination_register, value);
     }
 
-    fn register(&self, register: u16) -> u32 {
+    pub fn register(&self, register: u16) -> u32 {
         match register {
             0 => self.r00,
             1 => self.r01,
@@ -820,7 +1344,13 @@ impl Cpu {
             12 => self.r12,
             13 => self.stack_pointer,
             14 => self.link_register,
-            15 => self.program_counter,
+            15 => {
+                if self.current_program_status_register.state() == CpuMode::Arm {
+                    self.program_counter.wrapping_add(4)
+                } else {
+                    self.program_counter.wrapping_add(2)
+                }
+            }
             _ => unreachable!(),
         }
     }
@@ -870,65 +1400,50 @@ impl Cpu {
         let (temp, carry) = self
             .register(source_register)
             .overflowing_add(self.register(destination_register));
+        let (_, overflow) = self
+            .register(source_register)
+            .cast_signed()
+            .overflowing_add(self.register(destination_register).cast_signed());
         self.current_program_status_register
             .set_negative(temp & 0x8000_0000 == 0x8000_0000);
         self.current_program_status_register
             .set_zero(temp == 0x0000_0000);
         self.current_program_status_register.set_carry(carry);
-        self.current_program_status_register.set_overflow(carry); // TODO: fix this
+        self.current_program_status_register.set_overflow(overflow);
     }
 
     fn test_sub(&mut self, source_register: u16, destination_register: u16) {
-        let (temp, overflow) = self
+        let (temp, borrow) = self
             .register(source_register)
             .overflowing_sub(self.register(destination_register));
+        let (_, overflow) = self
+            .register(source_register)
+            .cast_signed()
+            .overflowing_sub(self.register(destination_register).cast_signed());
         self.current_program_status_register
             .set_negative(temp & 0x8000_0000 == 0x8000_0000);
         self.current_program_status_register
             .set_zero(temp == 0x0000_0000);
-        self.current_program_status_register
-            .set_carry(self.register(source_register) >= self.register(destination_register));
+        self.current_program_status_register.set_carry(!borrow);
         self.current_program_status_register.set_overflow(overflow);
     }
 
     fn test_cmp(&mut self, source_register: u16, immediate: u32) {
-        let (temp, overflow) = self.register(source_register).overflowing_sub(immediate);
+        let (temp, borrow) = self.register(source_register).overflowing_sub(immediate);
+        let (_, overflow) = self
+            .register(source_register)
+            .cast_signed()
+            .overflowing_sub(immediate.cast_signed());
         self.current_program_status_register
             .set_negative(temp & 0x8000_0000 == 0x8000_0000);
         self.current_program_status_register
             .set_zero(temp == 0x0000_0000);
-        self.current_program_status_register
-            .set_carry(self.register(source_register) >= immediate);
+        self.current_program_status_register.set_carry(!borrow);
         self.current_program_status_register.set_overflow(overflow);
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum Instruction {
-    Arm(ArmInstruction),
-    Thumb(ThumbInstruction),
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum ArmInstruction {
-    DataProcessingPsrTransfer,
-    Multiply,
-    MultiplyLong,
-    SingleDataSwap,
-    BranchAndExchange,
-    HalfwordDataTransferRegisterOffset,
-    HalfwordDataTransferImmediateOffset,
-    SingleDataTransfer,
-    Undefined,
-    BlockDataTransfer,
-    Branch,
-    CoprocessorDataTransfer,
-    CoprocessorDataOperation,
-    CoprocessorRegisterTransfer,
-    SoftwareInterrupt,
-}
-
-const ARM_DECODE_TABLE: [(u32, u32, ArmInstruction); 13] = [
+const ARM_DECODE_TABLE: [(u32, u32, ArmInstruction); 14] = [
     // Mask         Value                      Instruction
     (0x0FFF_FFF0, 0x012F_FF10, ArmInstruction::BranchAndExchange),
     (0x0E00_0000, 0x0800_0000, ArmInstruction::BlockDataTransfer),
@@ -936,7 +1451,7 @@ const ARM_DECODE_TABLE: [(u32, u32, ArmInstruction); 13] = [
     (0x0F00_0000, 0x0F00_0000, ArmInstruction::SoftwareInterrupt),
     (0x0E00_0010, 0x0600_0010, ArmInstruction::Undefined),
     (0x0C00_0000, 0x0400_0000, ArmInstruction::SingleDataTransfer),
-    (0x0F00_0FF0, 0x0400_0090, ArmInstruction::SingleDataSwap),
+    (0x0F80_0FF0, 0x0100_0090, ArmInstruction::SingleDataSwap),
     (0x0F80_00F0, 0x0000_0090, ArmInstruction::Multiply),
     (0x0F80_00F0, 0x0080_0090, ArmInstruction::MultiplyLong),
     (
@@ -945,16 +1460,13 @@ const ARM_DECODE_TABLE: [(u32, u32, ArmInstruction); 13] = [
         ArmInstruction::HalfwordDataTransferRegisterOffset,
     ),
     (
-        0x0E40_0F90,
+        0x0E40_0090,
         0x0040_0090,
         ArmInstruction::HalfwordDataTransferImmediateOffset,
     ),
-    (
-        0x0C00_0000,
-        0x0000_0000,
-        ArmInstruction::DataProcessingPsrTransfer,
-    ),
-    (0x0F80_00F0, 0x0080_0090, ArmInstruction::MultiplyLong),
+    (0x0FBF_0000, 0x010F_0000, ArmInstruction::PsrTransferMRS),
+    (0x0DB0_F000, 0x0120_F000, ArmInstruction::PsrTransferMSR),
+    (0x0C00_0000, 0x0000_0000, ArmInstruction::DataProcessing),
 ];
 
 fn decode_arm_instruction(opcode: u32) -> ArmInstruction {
@@ -1122,6 +1634,20 @@ fn conditions(opcode: u32) -> u8 {
     ((opcode & MASK) >> SHIFT).truncate()
 }
 
+trait Bit {
+    fn bit(&self, bit: usize) -> bool;
+}
+
+impl Bit for u32 {
+    fn bit(&self, bit: usize) -> bool {
+        self & (1 << (bit % 32)) > 0
+    }
+}
+
+fn sign_extend_32(value: u32, size: u32) -> i32 {
+    ((value << (32 - size)) as i32) >> (32 - size)
+}
+
 trait Extendable {
     fn sign_extend(self) -> i32;
 }
@@ -1160,13 +1686,41 @@ impl Extendable12 for u16 {
     }
 }
 
+fn add(x: u32, y: u32) -> (u32, Option<bool>, Option<bool>) {
+    let (result, carry) = x.overflowing_add(y);
+    let (_, overflow) = x.cast_signed().overflowing_add(y.cast_signed());
+    (result, Some(carry), Some(overflow))
+}
+
+fn subtract(x: u32, y: u32) -> (u32, Option<bool>, Option<bool>) {
+    let (result, borrow) = x.overflowing_sub(y);
+    let (_, overflow) = x.cast_signed().overflowing_sub(y.cast_signed());
+    (result, Some(!borrow), Some(overflow))
+}
+
+fn add_carry(x: u32, y: u32, carry: u32) -> (u32, Option<bool>, Option<bool>) {
+    let (temp, c1) = x.overflowing_add(y);
+    let (result, c2) = temp.overflowing_add(carry);
+    let (temp, o1) = x.cast_signed().overflowing_add(y.cast_signed());
+    let (_, o2) = temp.overflowing_add(carry.cast_signed());
+    (result, Some(c1 | c2), Some(o1 | o2))
+}
+
+fn sub_carry(x: u32, y: u32, carry: u32) -> (u32, Option<bool>, Option<bool>) {
+    let (temp, b1) = x.overflowing_sub(y);
+    let (result, b2) = temp.wrapping_add(carry).overflowing_sub(1);
+    let (temp, o1) = x.cast_signed().overflowing_sub(y.cast_signed());
+    let (_, o2) = temp.wrapping_add(carry.cast_signed()).overflowing_sub(1);
+    (result, Some(!(b1 | b2)), Some(o1 | o2))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn move_shifted_register_sets_register() {
-        let mut cpu = Cpu::default();
+        let mut cpu = Cpu::thumb();
         let mut bus = Bus::new();
 
         cpu.r00 = 0xFFFF_FFFF;
@@ -1177,7 +1731,7 @@ mod tests {
 
     #[test]
     fn move_shifted_register_left_shift() {
-        let mut cpu = Cpu::default();
+        let mut cpu = Cpu::thumb();
         let mut bus = Bus::new();
 
         cpu.r00 = 0x0000_0001;
@@ -1188,7 +1742,7 @@ mod tests {
 
     #[test]
     fn move_shifted_register_right_shift() {
-        let mut cpu = Cpu::default();
+        let mut cpu = Cpu::thumb();
         let mut bus = Bus::new();
 
         cpu.r00 = 0x0000_0002;
@@ -1199,7 +1753,7 @@ mod tests {
 
     #[test]
     fn move_shifted_register_arithmetic_shift() {
-        let mut cpu = Cpu::default();
+        let mut cpu = Cpu::thumb();
         let mut bus = Bus::new();
 
         cpu.r00 = 0x8000_0002;
@@ -1210,7 +1764,7 @@ mod tests {
 
     #[test]
     fn add_subtract_add_register() {
-        let mut cpu = Cpu::default();
+        let mut cpu = Cpu::thumb();
         let mut bus = Bus::new();
 
         cpu.r00 = 0x0000_0001;
@@ -1222,7 +1776,7 @@ mod tests {
 
     #[test]
     fn add_subtract_add_immediate() {
-        let mut cpu = Cpu::default();
+        let mut cpu = Cpu::thumb();
         let mut bus = Bus::new();
 
         cpu.r00 = 0x0000_0001;
@@ -1233,7 +1787,7 @@ mod tests {
 
     #[test]
     fn add_subtract_sub_register() {
-        let mut cpu = Cpu::default();
+        let mut cpu = Cpu::thumb();
         let mut bus = Bus::new();
 
         cpu.r00 = 0x0000_0001;
@@ -1245,7 +1799,7 @@ mod tests {
 
     #[test]
     fn add_subtract_sub_immediate() {
-        let mut cpu = Cpu::default();
+        let mut cpu = Cpu::thumb();
         let mut bus = Bus::new();
 
         cpu.r00 = 0x0000_0001;
