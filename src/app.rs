@@ -111,12 +111,20 @@ impl GbaApp {
             ui.label(format!("R04: {:#010X}", self.gba.register(4)));
             ui.label(format!("R05: {:#010X}", self.gba.register(5)));
             ui.label(format!("R06: {:#010X}", self.gba.register(6)));
-            ui.label(format!("R07: {:#010X}", self.gba.register(7)));
+            ui.label(format!(
+                "R07: {:#010X}, Test: {}",
+                self.gba.register(7),
+                self.gba.register(7)
+            ));
             ui.label(format!("R08: {:#010X}", self.gba.register(8)));
             ui.label(format!("R09: {:#010X}", self.gba.register(9)));
             ui.label(format!("R10: {:#010X}", self.gba.register(10)));
             ui.label(format!("R11: {:#010X}", self.gba.register(11)));
-            ui.label(format!("R12: {:#010X}", self.gba.register(12)));
+            ui.label(format!(
+                "R12: {:#010X}, Test: {}",
+                self.gba.register(12),
+                self.gba.register(12)
+            ));
             ui.label(format!("R13: {:#010X}", self.gba.register(13)));
             ui.label(format!("R14: {:#010X}", self.gba.register(14)));
             ui.label(format!("R15: {:#010X}", self.gba.register(15)));
@@ -185,12 +193,20 @@ impl GbaApp {
             ui.label(format!("R04: {:#010X}", self.gba.register(4)));
             ui.label(format!("R05: {:#010X}", self.gba.register(5)));
             ui.label(format!("R06: {:#010X}", self.gba.register(6)));
-            ui.label(format!("R07: {:#010X}", self.gba.register(7)));
+            ui.label(format!(
+                "R07: {:#010X}, Test: {}",
+                self.gba.register(7),
+                self.gba.register(7)
+            ));
             ui.label(format!("R08: {:#010X}", self.gba.register(8)));
             ui.label(format!("R09: {:#010X}", self.gba.register(9)));
             ui.label(format!("R10: {:#010X}", self.gba.register(10)));
             ui.label(format!("R11: {:#010X}", self.gba.register(11)));
-            ui.label(format!("R12: {:#010X}", self.gba.register(12)));
+            ui.label(format!(
+                "R12: {:#010X}, Test: {}",
+                self.gba.register(12),
+                self.gba.register(12)
+            ));
             ui.label(format!("R13: {:#010X}", self.gba.register(13)));
             ui.label(format!("R14: {:#010X}", self.gba.register(14)));
             ui.label(format!("R15: {:#010X}", self.gba.register(15)));
