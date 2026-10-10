@@ -235,7 +235,7 @@ impl Cpu {
         }
     }
 
-    fn shift(&mut self, operand: u32) -> u32 {
+    fn shift(&mut self, operand: u32) -> (u32, Option<bool>, Option<bool>) {
         const IMMEDIATE_VALUE_MASK: u32 = 0x0000_0F80;
         const IMMEDIATE_VALUE_SHIFT: usize = 7;
         const SHIFT_REGISTER_MASK: u32 = 0x0000_0F00;
@@ -253,27 +253,39 @@ impl Cpu {
             self.register(register.truncate()) & 0x0000_00FF
         };
         let source_register = (operand & SOURCE_REGISTER_MASK).truncate();
-        let (value, carry, overflow) = match shift_type {
-            0b00 => shift_left(self.register(source_register), shift),
-            0b01 => shift_right(self.register(source_register), shift),
-            0b10 => arithmetic_shift_right(self.register(source_register), shift),
-            0b11 => rotate_right(self.register(source_register), shift),
+        match (shift_type, immediate && shift == 0) {
+            (0b00, _) => shift_left(self.register(source_register), shift),
+            (0b01, true) => shift_right(self.register(source_register), 32),
+            (0b01, false) => shift_right(self.register(source_register), shift),
+            (0b10, true) => arithmetic_shift_right(self.register(source_register), 32),
+            (0b10, false) => arithmetic_shift_right(self.register(source_register), shift),
+            (0b11, true) => self.rotate_right_carry(self.register(source_register)),
+            (0b11, false) => rotate_right(self.register(source_register), shift),
             _ => unreachable!("Invalid shift type: {shift_type:#06X}"),
-        };
-        self.set_conditions(value, carry, overflow);
-        value
+        }
     }
 
-    fn parse_second_operand(&mut self, immediate: bool, operand: u32) -> u32 {
+    fn parse_second_operand(
+        &mut self,
+        immediate: bool,
+        operand: u32,
+    ) -> (u32, Option<bool>, Option<bool>) {
         const ROTATE_MASK: u32 = 0x0000_0F00;
         const ROTATE_SHIFT: usize = 8;
         const IMMEDIATE_MASK: u32 = 0x0000_00FF;
         if immediate {
             let rotate = ((operand & ROTATE_MASK) >> ROTATE_SHIFT).wrapping_mul(2);
-            (operand & IMMEDIATE_MASK).rotate_right(rotate)
+            let value = operand & IMMEDIATE_MASK;
+            rotate_right(value, rotate)
         } else {
             self.shift(operand)
         }
+    }
+
+    fn rotate_right_carry(&self, value: u32) -> (u32, Option<bool>, Option<bool>) {
+        let (result, carry, _) = shift_right(value, 1);
+        let result = result | u32::from(self.program_status_register.carry()) << 31;
+        (result, carry, None)
     }
 
     fn data_processing(&mut self, opcode: u32) {
@@ -294,7 +306,11 @@ impl Cpu {
         let first_operand_register =
             (opcode & FIRST_OPERAND_REGISTER_MASK) >> FIRST_OPERAND_REGISTER_SHIFT;
         let first_operand = self.register(first_operand_register.truncate());
-        let second_operand = self.parse_second_operand(immediate, opcode & SECOND_OPERAND_MASK);
+        let (second_operand, carry, overflow) =
+            self.parse_second_operand(immediate, opcode & SECOND_OPERAND_MASK);
+        if set_conditions {
+            self.set_conditions(second_operand, carry, overflow);
+        }
         let operation = DataProcessingOperation::from(sub_opcode);
         let carry_flag = u32::from(self.program_status_register.carry());
         let (value, carry, overflow) = match operation {
@@ -616,8 +632,8 @@ impl Cpu {
         let source_destination_register = ((opcode & SOURCE_DESTINATION_REGISTER_MASK)
             >> SOURCE_DESTINATION_REGISTER_SHIFT)
             .truncate();
-        let offset = if immediate {
-            opcode & IMMEDIATE_OFFSET_MASK
+        let (offset, _, _) = if immediate {
+            (opcode & IMMEDIATE_OFFSET_MASK, None, None)
         } else {
             self.shift(opcode & IMMEDIATE_OFFSET_MASK)
         };
@@ -1333,6 +1349,10 @@ impl Cpu {
         let immediate_value = (opcode & IMMEDIATE_VALUE_MASK) >> IMMEDIATE_VALUE_SHIFT;
         let source_register = (opcode & SOURCE_REGISTER_MASK) >> SOURCE_REGISTER_SHIFT;
         let destination_register = opcode & DESTINATION_REGISTER_MASK;
+        // Not sure about this, but ai says to do it. Need to find the correct documentation.
+        //if immediate_value == 0 {
+        //immediate_value = 32;
+        //}
         let (value, carry, overflow) = match sub_opcode {
             0b00 => shift_left(self.register(source_register), immediate_value.into()),
             0b01 => shift_right(self.register(source_register), immediate_value.into()),
@@ -1724,35 +1744,28 @@ fn shift_right(x: u32, shift: u32) -> (u32, Option<bool>, Option<bool>) {
 }
 
 fn arithmetic_shift_right(x: u32, shift: u32) -> (u32, Option<bool>, Option<bool>) {
-    if shift > 31 {
-        let bit = x.bit(31);
-        let value = if bit { 0xFFFF_FFFF } else { 0x0000_0000 };
-        (value, Some(bit), None)
-    } else {
-        (
+    match shift {
+        0 => (x, None, None),
+        1..=31 => (
             (x.cast_signed() >> shift).cast_unsigned(),
             Some(x.bit((shift as usize).wrapping_sub(1))),
             None,
-        )
+        ),
+        _ => {
+            let bit = x.bit(31);
+            let value = if bit { 0xFFFF_FFFF } else { 0x0000_0000 };
+            (value, Some(bit), None)
+        }
     }
 }
 
 fn rotate_right(x: u32, shift: u32) -> (u32, Option<bool>, Option<bool>) {
-    if shift > 31 {
-        let s = shift % 32;
-        let bit = if s == 0 {
-            31
-        } else {
-            (s as usize).wrapping_sub(1)
-        };
-        (x.rotate_right(shift), Some(x.bit(bit)), None)
-    } else {
-        (
-            x.rotate_right(shift),
-            Some(x.bit((shift as usize).wrapping_sub(1))),
-            None,
-        )
+    if shift == 0 {
+        return (x, None, None);
     }
+    let s = shift as usize % 32;
+    let carry = x.bit(if s == 0 { 31 } else { s.wrapping_sub(1) });
+    (x.rotate_right(shift), Some(carry), None)
 }
 
 fn and(x: u32, y: u32) -> (u32, Option<bool>, Option<bool>) {
