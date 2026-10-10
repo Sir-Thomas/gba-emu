@@ -31,6 +31,8 @@ pub struct GbaApp {
     frame_time: MovingAverage<f64>,
     mode: Mode,
     text_input: String,
+    hblank: bool,
+    vblank: bool,
     scale: f32,
 }
 
@@ -54,6 +56,8 @@ impl GbaApp {
             frame_time: MovingAverage::new(FRAME_TIME_SAMPLES),
             mode: Mode::Debug,
             text_input: "0000".to_owned(),
+            hblank: false,
+            vblank: false,
             scale: STARTING_SCALE,
         }
     }
@@ -131,11 +135,25 @@ impl GbaApp {
     fn debug(&mut self, ui: &mut Ui, _frame: &mut Frame) {
         CentralPanel::default().show(ui, |ui| {
             ui.label(format!("Mode: {:?}", self.mode));
-            if ui.add(Button::new("advance")).clicked() {
-                self.gba.cpu_cycle();
-                let image = framebuffer_to_image(self.gba.draw());
-                self.display_texture.set(image, TextureOptions::NEAREST);
-            }
+            ui.horizontal(|ui| {
+                if ui.add(Button::new("advance")).clicked() {
+                    if self.hblank {
+                        self.gba.set_hblank();
+                    } else {
+                        self.gba.clear_hblank();
+                    }
+                    if self.vblank {
+                        self.gba.set_vblank();
+                    } else {
+                        self.gba.clear_vblank();
+                    }
+                    self.gba.cpu_cycle();
+                    let image = framebuffer_to_image(self.gba.draw());
+                    self.display_texture.set(image, TextureOptions::NEAREST);
+                }
+                ui.checkbox(&mut self.hblank, "H-Blank");
+                ui.checkbox(&mut self.vblank, "V-Blank");
+            });
             if ui.add(Button::new("run")).clicked() {
                 self.mode = Mode::Run;
                 ui.request_repaint();
