@@ -223,11 +223,16 @@ impl Cpu {
         }
     }
 
-    fn set_conditions(&mut self, (negative, zero, carry, overflow): (bool, bool, bool, bool)) {
-        self.program_status_register.set_negative(negative);
-        self.program_status_register.set_zero(zero);
-        self.program_status_register.set_carry(carry);
-        self.program_status_register.set_overflow(overflow);
+    fn set_conditions(&mut self, result: u32, carry: Option<bool>, overflow: Option<bool>) {
+        self.program_status_register
+            .set_negative(result & 0x8000_0000 > 0);
+        self.program_status_register.set_zero(result == 0);
+        if let Some(c) = carry {
+            self.program_status_register.set_carry(c);
+        }
+        if let Some(v) = overflow {
+            self.program_status_register.set_overflow(v);
+        }
     }
 
     fn shift(&mut self, operand: u32) -> u32 {
@@ -248,74 +253,15 @@ impl Cpu {
             self.register(register.truncate()) & 0x0000_00FF
         };
         let source_register = (operand & SOURCE_REGISTER_MASK).truncate();
-        match shift_type {
-            0b00 => {
-                if shift > 32 {
-                    self.program_status_register.set_carry(false);
-                    0
-                } else {
-                    let value = self.register(source_register) << shift;
-                    self.program_status_register
-                        .set_carry(value.bit(32usize.wrapping_sub(shift as usize)));
-                    if shift == 32 {
-                        println!("It wasn't needed");
-                        // delete code from next block if so
-                    }
-                    value
-                }
-            }
-            0b01 => {
-                if shift > 32 {
-                    self.program_status_register.set_carry(false);
-                    0
-                } else if shift == 32 {
-                    // not sure if this is needed
-                    self.program_status_register
-                        .set_carry(self.register(source_register).bit(31));
-                    0
-                } else {
-                    // this might handle shift by 32 fine
-                    self.program_status_register.set_carry(
-                        self.register(source_register)
-                            .bit((shift as usize).wrapping_sub(1)),
-                    );
-                    self.register(source_register) >> shift
-                }
-            }
-            0b10 => {
-                if shift > 31 {
-                    let bit = self.register(source_register).bit(31);
-                    self.program_status_register.set_carry(bit);
-                    if bit { 0xFFFF_FFFF } else { 0x0000_0000 }
-                } else {
-                    self.program_status_register.set_carry(
-                        self.register(source_register)
-                            .bit((shift as usize).wrapping_sub(1)),
-                    );
-                    (self.register(source_register).cast_signed() >> shift).cast_unsigned()
-                }
-            }
-            0b11 => {
-                if shift > 31 {
-                    let s = shift % 32;
-                    let bit = if s == 0 {
-                        31
-                    } else {
-                        (s as usize).wrapping_sub(1)
-                    };
-                    self.program_status_register
-                        .set_carry(self.register(source_register).bit(bit));
-                    self.register(source_register).rotate_right(shift)
-                } else {
-                    self.program_status_register.set_carry(
-                        self.register(source_register)
-                            .bit((shift as usize).wrapping_sub(1)),
-                    );
-                    self.register(source_register).rotate_right(shift)
-                }
-            }
+        let (value, carry, overflow) = match shift_type {
+            0b00 => shift_left(self.register(source_register), shift),
+            0b01 => shift_right(self.register(source_register), shift),
+            0b10 => arithmetic_shift_right(self.register(source_register), shift),
+            0b11 => rotate_right(self.register(source_register), shift),
             _ => unreachable!("Invalid shift type: {shift_type:#06X}"),
-        }
+        };
+        self.set_conditions(value, carry, overflow);
+        value
     }
 
     fn parse_second_operand(&mut self, immediate: bool, operand: u32) -> u32 {
@@ -376,13 +322,7 @@ impl Cpu {
             DataProcessingOperation::MoveNot => (!second_operand, None, None),
         };
         if set_conditions {
-            self.program_status_register
-                .set_negative(value & 0x8000_0000 > 0);
-            self.program_status_register.set_zero(value == 0);
-            self.program_status_register
-                .set_carry(carry.unwrap_or(self.program_status_register.carry()));
-            self.program_status_register
-                .set_overflow(overflow.unwrap_or(self.program_status_register.overflow()));
+            self.set_conditions(value, carry, overflow);
         }
         if !matches!(
             operation,
@@ -904,8 +844,6 @@ impl Cpu {
         const H_MASK: u16 = 0x0800;
         const OFFSET_MASK: u16 = 0x07FF;
         let h = opcode & H_MASK > 0;
-        // TODO: I think this needs to use an i32 instead of u32 for the offset. Not sure how to
-        // implement that
         let offset = opcode & OFFSET_MASK;
         if !h {
             self.link_register = self
@@ -1243,69 +1181,75 @@ impl Cpu {
         let sub_opcode = (opcode & OPCODE_MASK) >> OPCODE_SHIFT;
         let source_register = (opcode & SOURCE_REGISTER_MASK) >> SOURCE_REGISTER_SHIFT;
         let destination_register = opcode & DESTINATION_REGISTER_MASK;
-        // TODO: set flags
-        let value = match sub_opcode {
-            0x00 => self.register(destination_register) & self.register(source_register),
-            0x01 => self.register(destination_register) ^ self.register(source_register),
-            0x02 => {
-                let shift = self.register(source_register);
-                if shift > 31 {
-                    self.program_status_register.set_carry(false);
-                    0
-                } else {
-                    let v = self.register(destination_register) << shift;
-                    self.program_status_register
-                        .set_carry(v.bit(32usize.wrapping_sub(shift as usize)));
-                    v
-                }
-            }
-            0x03 => {
-                let shift = self.register(source_register);
-                if shift > 31 {
-                    self.program_status_register.set_carry(false);
-                    0
-                } else {
-                    self.program_status_register.set_carry(
-                        self.register(source_register)
-                            .bit((shift as usize).wrapping_sub(1)),
-                    );
-                    self.register(source_register) >> shift
-                }
-            }
-            0x04 => (self.register(destination_register).cast_signed()
-                >> self.register(source_register))
-            .cast_unsigned(),
-            0x05 => self
-                .register(destination_register)
-                .wrapping_add(self.register(source_register))
-                .wrapping_add(u32::from(self.program_status_register.carry())),
-            0x06 => self
-                .register(destination_register)
-                .wrapping_sub(self.register(source_register))
-                .wrapping_sub(u32::from(!self.program_status_register.carry())),
-            0x07 => self.ror(destination_register, source_register),
-            0x08 => {
-                self.test_and(destination_register, source_register);
+        let (value, carry, overflow) = match sub_opcode {
+            0x00 => and(
+                self.register(destination_register),
+                self.register(source_register),
+            ),
+            0x01 => xor(
+                self.register(destination_register),
+                self.register(source_register),
+            ),
+            0x02 => shift_left(
+                self.register(destination_register),
+                self.register(source_register),
+            ),
+            0x03 => shift_right(
+                self.register(destination_register),
+                self.register(source_register),
+            ),
+            0x04 => arithmetic_shift_right(
+                self.register(destination_register),
+                self.register(source_register),
+            ),
+            0x05 => add_carry(
+                self.register(source_register),
+                self.register(destination_register),
+                self.program_status_register.carry().into(),
+            ),
+            0x06 => sub_carry(
+                self.register(source_register),
+                self.register(destination_register),
+                self.program_status_register.carry().into(),
+            ),
+            0x07 => rotate_right(
+                self.register(destination_register),
+                self.register(source_register),
+            ),
+            0x08 => and(
+                self.register(destination_register),
+                self.register(source_register),
+            ),
+            0x09 => subtract(0, self.register(source_register)),
+            0x0A => subtract(
+                self.register(destination_register),
+                self.register(source_register),
+            ),
+            0x0B => add(
+                self.register(destination_register),
+                self.register(source_register),
+            ),
+            0x0C => or(
+                self.register(destination_register),
+                self.register(source_register),
+            ),
+            0x0D => (
                 self.register(destination_register)
-            }
-            0x09 => 0u32.wrapping_sub(self.register(source_register)),
-            0x0A => {
-                self.test_sub(destination_register, source_register);
-                self.register(destination_register)
-            }
-            0x0B => {
-                self.test_add(destination_register, source_register);
-                self.register(destination_register)
-            }
-            0x0C => self.register(destination_register) | self.register(source_register),
-            0x0D => self
-                .register(destination_register)
-                .wrapping_mul(self.register(source_register)),
-            0x0E => self.register(destination_register) & !self.register(source_register),
-            0x0F => !self.register(source_register),
+                    .wrapping_mul(self.register(source_register)),
+                None,
+                None,
+            ),
+            0x0E => and(
+                self.register(destination_register),
+                !self.register(source_register),
+            ),
+            0x0F => (!self.register(source_register), None, None),
             _ => unreachable!(),
         };
-        self.set_register(destination_register, value);
+        self.set_conditions(value, carry, overflow);
+        if !matches!(sub_opcode, 0x08 | 0x0A | 0x0B) {
+            self.set_register(destination_register, value);
+        }
     }
 
     fn move_compare_add_subtract_immediate(&mut self, opcode: u16) {
@@ -1334,12 +1278,7 @@ impl Cpu {
             ),
             _ => unreachable!(),
         };
-        self.set_conditions((
-            value & 0x8000_0000 > 0,
-            value == 0,
-            carry.unwrap_or(self.program_status_register.carry()),
-            overflow.unwrap_or(self.program_status_register.overflow()),
-        ));
+        self.set_conditions(value, carry, overflow);
         if sub_opcode == 0b01 {
             return;
         }
@@ -1378,12 +1317,7 @@ impl Cpu {
                 .register(source_register)
                 .wrapping_sub(u32::from(immediate_value)),
         };
-        self.set_conditions((
-            value & 0x8000_0000 > 0,
-            value == 0,
-            self.program_status_register.carry(),
-            self.program_status_register.overflow(),
-        ));
+        self.set_conditions(value, None, None);
         self.set_register(destination_register, value);
     }
 
@@ -1763,6 +1697,80 @@ impl Extendable12 for u16 {
             i32::from(self)
         }
     }
+}
+
+fn shift_left(x: u32, shift: u32) -> (u32, Option<bool>, Option<bool>) {
+    if shift > 32 {
+        (0, Some(false), None)
+    } else {
+        let value = x << shift;
+        let carry = value.bit(32usize.wrapping_sub(shift as usize));
+        if shift == 32 {
+            println!("It wasn't needed");
+            // delete code from next block if so
+        }
+        (value, Some(carry), None)
+    }
+}
+
+fn shift_right(x: u32, shift: u32) -> (u32, Option<bool>, Option<bool>) {
+    if shift > 32 {
+        (0, Some(false), None)
+    } else if shift == 32 {
+        // Not sure if this is needed
+        (0, Some(x.bit(31)), None)
+    } else {
+        // this might handle shift by 32 fine
+        (
+            x >> shift,
+            Some(x.bit((shift as usize).wrapping_sub(1))),
+            None,
+        )
+    }
+}
+
+fn arithmetic_shift_right(x: u32, shift: u32) -> (u32, Option<bool>, Option<bool>) {
+    if shift > 31 {
+        let bit = x.bit(31);
+        let value = if bit { 0xFFFF_FFFF } else { 0x0000_0000 };
+        (value, Some(bit), None)
+    } else {
+        (
+            (x.cast_signed() >> shift).cast_unsigned(),
+            Some(x.bit((shift as usize).wrapping_sub(1))),
+            None,
+        )
+    }
+}
+
+fn rotate_right(x: u32, shift: u32) -> (u32, Option<bool>, Option<bool>) {
+    if shift > 31 {
+        let s = shift % 32;
+        let bit = if s == 0 {
+            31
+        } else {
+            (s as usize).wrapping_sub(1)
+        };
+        (x.rotate_right(shift), Some(x.bit(bit)), None)
+    } else {
+        (
+            x.rotate_right(shift),
+            Some(x.bit((shift as usize).wrapping_sub(1))),
+            None,
+        )
+    }
+}
+
+fn and(x: u32, y: u32) -> (u32, Option<bool>, Option<bool>) {
+    (x & y, None, None)
+}
+
+fn xor(x: u32, y: u32) -> (u32, Option<bool>, Option<bool>) {
+    (x ^ y, None, None)
+}
+
+fn or(x: u32, y: u32) -> (u32, Option<bool>, Option<bool>) {
+    (x | y, None, None)
 }
 
 fn add(x: u32, y: u32) -> (u32, Option<bool>, Option<bool>) {
