@@ -426,19 +426,24 @@ impl Cpu {
     fn psr_transfer_msr(&mut self, opcode: u32) {
         const IMMEDIATE_VALUE_BIT: u32 = 1 << 25;
         const SOURCE_PSR_BIT: u32 = 1 << 22;
+        const MODE_INCLUDED_BIT: u32 = 1 << 16;
         const ROTATE_MASK: u32 = 0x0000_0F00;
         const ROTATE_SHIFT: usize = 8;
         const IMMEDIATE_VALUE_MASK: u32 = 0x0000_00FF;
         const REGISTER_MASK: u32 = 0x0000_000F;
         let immediate = opcode & IMMEDIATE_VALUE_BIT > 0;
+        let mode_included = opcode & MODE_INCLUDED_BIT > 0;
         let saved = opcode & SOURCE_PSR_BIT > 0;
-        let value = if immediate {
+        let mut value = if immediate {
             let rotate = (opcode & ROTATE_MASK) >> ROTATE_SHIFT;
             (opcode & IMMEDIATE_VALUE_MASK).rotate_right(rotate.wrapping_mul(2))
         } else {
             let register = opcode & REGISTER_MASK;
             self.register(register.truncate())
         };
+        if !mode_included {
+            value = (value & !0b11111) | (self.program_status_register.current() & 0b11111);
+        }
         if !saved {
             self.program_status_register.set(value);
             return;
@@ -507,10 +512,11 @@ impl Cpu {
         let thumb = address & THUMB_MODE_BIT > 0;
         if thumb {
             self.program_status_register.set_state(CpuMode::Thumb);
+            self.program_counter = address & !1;
         } else {
             self.program_status_register.set_state(CpuMode::Arm);
+            self.program_counter = address & !3;
         }
-        self.program_counter = address & !1;
     }
 
     fn halfword_data_transfer_register_offset(&mut self, opcode: u32, bus: &mut Bus) {
@@ -821,7 +827,13 @@ impl Cpu {
             }
             ThumbInstruction::AddSubtract => self.add_subtract(opcode),
             ThumbInstruction::MoveShiftedRegister => self.move_shifted_register(opcode),
-            ThumbInstruction::Unimplemented => unreachable!(),
+            ThumbInstruction::Unimplemented => {
+                println!(
+                    "Location: {:#010X}, Callback: {:#010X}",
+                    self.program_counter, self.link_register
+                );
+                unreachable!("Unimplemented Thumb opcode: {opcode:#06X}")
+            }
         }
     }
 
@@ -1219,7 +1231,7 @@ impl Cpu {
             CpuMode::Arm
         };
         self.program_status_register.set_state(mode);
-        self.program_counter = self.register(r) & !3;
+        self.program_counter = self.register(r) & !1;
     }
 
     fn alu_operations(&mut self, opcode: u16) {
@@ -1235,18 +1247,29 @@ impl Cpu {
         let value = match sub_opcode {
             0x00 => self.register(destination_register) & self.register(source_register),
             0x01 => self.register(destination_register) ^ self.register(source_register),
-            0x02 => self.register(destination_register) << self.register(source_register),
+            0x02 => {
+                let shift = self.register(source_register);
+                if shift > 31 {
+                    self.program_status_register.set_carry(false);
+                    0
+                } else {
+                    let v = self.register(destination_register) << shift;
+                    self.program_status_register
+                        .set_carry(v.bit(32usize.wrapping_sub(shift as usize)));
+                    v
+                }
+            }
             0x03 => {
                 let shift = self.register(source_register);
                 if shift > 31 {
                     self.program_status_register.set_carry(false);
                     0
                 } else {
-                    let value =
-                        self.register(destination_register) >> self.register(source_register);
-                    self.program_status_register
-                        .set_carry(value.bit(32usize.wrapping_sub(shift as usize)));
-                    value
+                    self.program_status_register.set_carry(
+                        self.register(source_register)
+                            .bit((shift as usize).wrapping_sub(1)),
+                    );
+                    self.register(source_register) >> shift
                 }
             }
             0x04 => (self.register(destination_register).cast_signed()
