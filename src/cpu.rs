@@ -1700,32 +1700,28 @@ impl Extendable12 for u16 {
 }
 
 fn shift_left(x: u32, shift: u32) -> (u32, Option<bool>, Option<bool>) {
-    if shift > 32 {
-        (0, Some(false), None)
-    } else {
-        let value = x << shift;
-        let carry = value.bit(32usize.wrapping_sub(shift as usize));
-        if shift == 32 {
-            println!("It wasn't needed");
-            // delete code from next block if so
-        }
-        (value, Some(carry), None)
+    match shift {
+        0 => (x, None, None),
+        1..=31 => (
+            x << shift,
+            Some(x.bit(32usize.wrapping_sub(shift as usize))),
+            None,
+        ),
+        32 => (0, Some(x.bit(0)), None),
+        _ => (0, Some(false), None),
     }
 }
 
 fn shift_right(x: u32, shift: u32) -> (u32, Option<bool>, Option<bool>) {
-    if shift > 32 {
-        (0, Some(false), None)
-    } else if shift == 32 {
-        // Not sure if this is needed
-        (0, Some(x.bit(31)), None)
-    } else {
-        // this might handle shift by 32 fine
-        (
+    match shift {
+        0 => (x, None, None),
+        1..=31 => (
             x >> shift,
             Some(x.bit((shift as usize).wrapping_sub(1))),
             None,
-        )
+        ),
+        32 => (0, Some(x.bit(31)), None),
+        _ => (0, Some(false), None),
     }
 }
 
