@@ -70,6 +70,7 @@
               libxrandr
               libxi
               alsa-lib
+              gcc-arm-embedded
             ];
 
             env = {
