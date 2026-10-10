@@ -1333,15 +1333,13 @@ impl Cpu {
         let immediate_value = (opcode & IMMEDIATE_VALUE_MASK) >> IMMEDIATE_VALUE_SHIFT;
         let source_register = (opcode & SOURCE_REGISTER_MASK) >> SOURCE_REGISTER_SHIFT;
         let destination_register = opcode & DESTINATION_REGISTER_MASK;
-        let value = match sub_opcode {
-            0b00 => self.register(source_register) << immediate_value,
-            0b01 => self.register(source_register) >> immediate_value,
-            // Arithmatic shift (signed right shift)
-            0b10 => {
-                (self.register(source_register).cast_signed() >> immediate_value).cast_unsigned()
-            }
+        let (value, carry, overflow) = match sub_opcode {
+            0b00 => shift_left(self.register(source_register), immediate_value.into()),
+            0b01 => shift_right(self.register(source_register), immediate_value.into()),
+            0b10 => arithmetic_shift_right(self.register(source_register), immediate_value.into()),
             _ => unreachable!(),
         };
+        self.set_conditions(value, carry, overflow);
         self.set_register(destination_register, value);
     }
 
