@@ -90,7 +90,7 @@ impl Gba {
     }
 
     pub fn register(&self, register: u16) -> u32 {
-        self.cpu.register(register)
+        self.cpu.registers.get(register)
     }
 
     pub fn load_bios(&mut self) {

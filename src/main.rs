@@ -5,7 +5,6 @@ mod bus;
 mod cpu;
 mod gba;
 mod ppu;
-mod program_status_register;
 
 use crate::gba::Gba;
 use eframe::{NativeOptions, Result, run_native};
