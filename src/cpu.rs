@@ -1155,8 +1155,8 @@ impl Cpu {
     fn hi_register_operations_branch_exchange(&mut self, opcode: u16) {
         const OPCODE_MASK: u16 = 0x0300;
         const OPCODE_SHIFT: usize = 8;
-        const H1_MASK: u16 = 0x0080;
-        const H2_MASK: u16 = 0x0040;
+        const H1_MASK: u16 = 1 << 7;
+        const H2_MASK: u16 = 1 << 6;
         const SOURCE_REGISTER_MASK: u16 = 0x0038;
         const SOURCE_REGISTER_SHIFT: usize = 3;
         const DESTINATION_REGISTER_MASK: u16 = 0x0007;
@@ -1181,16 +1181,8 @@ impl Cpu {
         source_register: u16,
         destination_register: u16,
     ) {
-        let dest = if h1 {
-            destination_register | 0x08
-        } else {
-            destination_register
-        };
-        let src = if h2 {
-            source_register | 0x08
-        } else {
-            source_register
-        };
+        let dest = (u16::from(h1) << 3) | destination_register;
+        let src = (u16::from(h2) << 3) | source_register;
         let value = self.register(dest).wrapping_add(self.register(src));
         self.set_register(dest, value);
     }
@@ -1202,16 +1194,8 @@ impl Cpu {
         source_register: u16,
         destination_register: u16,
     ) {
-        let dest = if h1 {
-            destination_register | 0x08
-        } else {
-            destination_register
-        };
-        let src = if h2 {
-            source_register | 0x08
-        } else {
-            source_register
-        };
+        let dest = (u16::from(h1) << 3) | destination_register;
+        let src = (u16::from(h2) << 3) | source_register;
         self.test_sub(dest, src);
     }
 
@@ -1222,21 +1206,13 @@ impl Cpu {
         source_register: u16,
         destination_register: u16,
     ) {
-        let dest = if h1 {
-            destination_register | 0x08
-        } else {
-            destination_register
-        };
-        let src = if h2 {
-            source_register | 0x08
-        } else {
-            source_register
-        };
+        let dest = (u16::from(h1) << 3) | destination_register;
+        let src = (u16::from(h2) << 3) | source_register;
         self.set_register(dest, self.register(src));
     }
 
     fn hi_register_bx(&mut self, h: bool, register: u16) {
-        let r = if h { register | 0x08 } else { register };
+        let r = (u16::from(h) << 3) | register;
         let mode = if self.register(r) & 0x01 > 0 {
             CpuMode::Thumb
         } else {
@@ -1260,7 +1236,19 @@ impl Cpu {
             0x00 => self.register(destination_register) & self.register(source_register),
             0x01 => self.register(destination_register) ^ self.register(source_register),
             0x02 => self.register(destination_register) << self.register(source_register),
-            0x03 => self.register(destination_register) >> self.register(source_register),
+            0x03 => {
+                let shift = self.register(source_register);
+                if shift > 31 {
+                    self.program_status_register.set_carry(false);
+                    0
+                } else {
+                    let value =
+                        self.register(destination_register) >> self.register(source_register);
+                    self.program_status_register
+                        .set_carry(value.bit(32usize.wrapping_sub(shift as usize)));
+                    value
+                }
+            }
             0x04 => (self.register(destination_register).cast_signed()
                 >> self.register(source_register))
             .cast_unsigned(),
@@ -1307,22 +1295,32 @@ impl Cpu {
         let destination_register =
             (opcode & DESTINATION_REGISTER_MASK) >> DESTINATION_REGISTER_SHIFT;
         let immediate_value = opcode & IMMEDIATE_VALUE_MASK;
-        // TODO: set flags
-        match sub_opcode {
-            0b00 => self.set_register(destination_register, u32::from(immediate_value)),
-            0b01 => self.test_cmp(destination_register, u32::from(immediate_value)),
-            0b10 => self.set_register(
-                destination_register,
-                self.register(destination_register)
-                    .wrapping_add(u32::from(immediate_value)),
+        let (value, carry, overflow) = match sub_opcode {
+            0b00 => (u32::from(immediate_value), None, None),
+            0b01 => subtract(
+                self.register(destination_register),
+                u32::from(immediate_value),
             ),
-            0b11 => self.set_register(
-                destination_register,
-                self.register(destination_register)
-                    .wrapping_sub(u32::from(immediate_value)),
+            0b10 => add(
+                self.register(destination_register),
+                u32::from(immediate_value),
+            ),
+            0b11 => subtract(
+                self.register(destination_register),
+                u32::from(immediate_value),
             ),
             _ => unreachable!(),
+        };
+        self.set_conditions((
+            value & 0x8000_0000 > 0,
+            value == 0,
+            carry.unwrap_or(self.program_status_register.carry()),
+            overflow.unwrap_or(self.program_status_register.overflow()),
+        ));
+        if sub_opcode == 0b01 {
+            return;
         }
+        self.set_register(destination_register, value);
     }
 
     fn add_subtract(&mut self, opcode: u16) {
@@ -1343,7 +1341,6 @@ impl Cpu {
         let immediate_value = (opcode & IMMEDIATE_VALUE_MASK) >> IMMEDIATE_VALUE_SHIFT;
         let source_register = (opcode & SOURCE_REGISTER_MASK) >> SOURCE_REGISTER_SHIFT;
         let destination_register = opcode & DESTINATION_REGISTER_MASK;
-        // TODO: set flags
         let value = match (sub_opcode, i) {
             (false, false) => self
                 .register(source_register)
@@ -1358,6 +1355,12 @@ impl Cpu {
                 .register(source_register)
                 .wrapping_sub(u32::from(immediate_value)),
         };
+        self.set_conditions((
+            value & 0x8000_0000 > 0,
+            value == 0,
+            self.program_status_register.carry(),
+            self.program_status_register.overflow(),
+        ));
         self.set_register(destination_register, value);
     }
 
@@ -1373,7 +1376,6 @@ impl Cpu {
         let immediate_value = (opcode & IMMEDIATE_VALUE_MASK) >> IMMEDIATE_VALUE_SHIFT;
         let source_register = (opcode & SOURCE_REGISTER_MASK) >> SOURCE_REGISTER_SHIFT;
         let destination_register = opcode & DESTINATION_REGISTER_MASK;
-        // TODO: set flags during shifts
         let value = match sub_opcode {
             0b00 => self.register(source_register) << immediate_value,
             0b01 => self.register(source_register) >> immediate_value,
