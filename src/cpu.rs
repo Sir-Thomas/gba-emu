@@ -178,18 +178,20 @@ impl Cpu {
             self.registers.get(register.truncate()) & 0x0000_00FF
         };
         let source_register = (operand & SOURCE_REGISTER_MASK).truncate();
+        // instruction pre-fetching work around
+        let source_value = if source_register == 15 && !immediate {
+            self.registers.get(source_register).wrapping_add(4)
+        } else {
+            self.registers.get(source_register)
+        };
         match (shift_type, immediate && shift == 0) {
-            (0b00, _) => alu::shift_left(self.registers.get(source_register), shift),
-            (0b01, true) => alu::shift_right(self.registers.get(source_register), 32),
-            (0b01, false) => alu::shift_right(self.registers.get(source_register), shift),
-            (0b10, true) => alu::arithmetic_shift_right(self.registers.get(source_register), 32),
-            (0b10, false) => {
-                alu::arithmetic_shift_right(self.registers.get(source_register), shift)
-            }
-            (0b11, true) => {
-                alu::rotate_right_carry(self.registers.get(source_register), self.registers.carry())
-            }
-            (0b11, false) => alu::rotate_right(self.registers.get(source_register), shift),
+            (0b00, _) => alu::shift_left(source_value, shift),
+            (0b01, true) => alu::shift_right(source_value, 32),
+            (0b01, false) => alu::shift_right(source_value, shift),
+            (0b10, true) => alu::arithmetic_shift_right(source_value, 32),
+            (0b10, false) => alu::arithmetic_shift_right(source_value, shift),
+            (0b11, true) => alu::rotate_right_carry(source_value, self.registers.carry()),
+            (0b11, false) => alu::rotate_right(source_value, shift),
             _ => unreachable!("Invalid shift type: {shift_type:#06X}"),
         }
     }
@@ -225,7 +227,14 @@ impl Cpu {
         let state_change = (opcode & SET_CONDITIONS_BIT > 0) && destination_register == 15;
         let first_operand_register =
             (opcode & FIRST_OPERAND_REGISTER_MASK) >> FIRST_OPERAND_REGISTER_SHIFT;
-        let first_operand = self.registers.get(first_operand_register.truncate());
+        // instruction pre-fetching work around
+        let first_operand = if first_operand_register == 15 && !immediate && opcode & (1 << 4) > 0 {
+            self.registers
+                .get(first_operand_register.truncate())
+                .wrapping_add(4)
+        } else {
+            self.registers.get(first_operand_register.truncate())
+        };
         let alu_result = self.parse_second_operand(immediate, opcode & SECOND_OPERAND_MASK);
         let second_operand = alu_result.result;
         if set_conditions {
@@ -636,7 +645,6 @@ impl Cpu {
             self.registers.link_register = self.registers.program_counter;
         }
         let offset = sign_extend((opcode & OFFSET_MASK) << 2, 26);
-        // + 4 for prefetch
         self.registers.program_counter = self
             .registers
             .get(15)
