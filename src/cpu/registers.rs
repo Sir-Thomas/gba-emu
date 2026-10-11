@@ -9,7 +9,7 @@ pub enum InstructionSet {
     Thumb,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum CpuMode {
     #[default]
     User,
@@ -196,6 +196,7 @@ impl StatusRegisters {
 #[derive(Default)]
 pub struct Registers {
     registers: [u32; 13],
+    fiq_registers: [u32; 5],
     pub stack_pointer: u32,
     pub link_register: u32,
     pub program_counter: u32,
@@ -217,7 +218,14 @@ impl Registers {
 
     pub fn get(&self, register: u16) -> u32 {
         match register {
-            0..=12 => self.registers[register as usize],
+            0..=7 => self.registers[register as usize],
+            8..=12 => {
+                if self.status_registers.current.cpu_mode == CpuMode::Fiq {
+                    self.fiq_registers[register as usize - 8]
+                } else {
+                    self.registers[register as usize]
+                }
+            }
             13 => self.stack_pointer,
             14 => self.link_register,
             15 => {
@@ -233,7 +241,14 @@ impl Registers {
 
     pub fn set(&mut self, register: u16, value: u32) {
         match register {
-            0..=12 => self.registers[register as usize] = value,
+            0..=7 => self.registers[register as usize] = value,
+            8..=12 => {
+                if self.status_registers.current.cpu_mode == CpuMode::Fiq {
+                    self.fiq_registers[register as usize - 8] = value
+                } else {
+                    self.registers[register as usize] = value
+                }
+            }
             13 => self.stack_pointer = value,
             14 => self.link_register = value,
             15 => self.program_counter = value,
