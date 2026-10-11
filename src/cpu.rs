@@ -406,15 +406,15 @@ impl Cpu {
             (false, _) => self.registers.get(base_register),
         };
         match (write_back, pre_index, up) {
-            // docs say write back should only be used with pre-index
-            (true, false, false) => self
+            // docs say post-index always writes back
+            (false, true, _) => {}
+            (_, false, false) => self
                 .registers
                 .set(base_register, address.wrapping_sub(offset)),
-            (true, false, true) => self
+            (_, false, true) => self
                 .registers
                 .set(base_register, address.wrapping_add(offset)),
             (true, true, _) => self.registers.set(base_register, address),
-            (false, _, _) => {}
         }
         match (halfword, load, signed) {
             (true, true, true) => self.registers.set(
@@ -477,15 +477,14 @@ impl Cpu {
             (false, _) => self.registers.get(base_register),
         };
         match (write_back, pre_index, up) {
-            // docs say write back should only be used with pre-index
-            (true, false, false) => self
+            (false, true, _) => {}
+            (_, false, false) => self
                 .registers
                 .set(base_register, address.wrapping_sub(offset)),
-            (true, false, true) => self
+            (_, false, true) => self
                 .registers
                 .set(base_register, address.wrapping_add(offset)),
             (true, true, _) => self.registers.set(base_register, address),
-            (false, _, _) => {}
         }
         match (halfword, load, signed) {
             (true, true, true) => self.registers.set(
@@ -552,15 +551,14 @@ impl Cpu {
             (false, _) => self.registers.get(base_register),
         };
         match (write_back, pre_index, up) {
-            // docs say write back should only be used with pre-index
-            (true, false, false) => self
+            (false, true, _) => {}
+            (_, false, false) => self
                 .registers
                 .set(base_register, address.wrapping_sub(offset)),
-            (true, false, true) => self
+            (_, false, true) => self
                 .registers
                 .set(base_register, address.wrapping_add(offset)),
             (true, true, _) => self.registers.set(base_register, address),
-            (false, _, _) => {}
         }
         match (byte, load) {
             (true, true) => self.registers.set(
@@ -582,7 +580,6 @@ impl Cpu {
     }
 
     fn block_data_transfer(&mut self, opcode: u32, bus: &mut Bus) {
-        // 1110 1001 0010 1101 0100 0000 0000 0011
         const PRE_POST_INDEXING_BIT: u32 = 1 << 24;
         const UP_DOWN_BIT: u32 = 1 << 23;
         const PSR_FORCE_USER_BIT: u32 = 1 << 22;
@@ -1277,28 +1274,22 @@ impl Cpu {
         let immediate_value = (opcode & IMMEDIATE_VALUE_MASK) >> IMMEDIATE_VALUE_SHIFT;
         let source_register = (opcode & SOURCE_REGISTER_MASK) >> SOURCE_REGISTER_SHIFT;
         let destination_register = opcode & DESTINATION_REGISTER_MASK;
-        let value = match (sub_opcode, i) {
-            (false, false) => self
-                .registers
-                .get(source_register)
-                .wrapping_add(self.registers.get(r3)),
-            (false, true) => self
-                .registers
-                .get(source_register)
-                .wrapping_add(u32::from(immediate_value)),
-            (true, false) => self
-                .registers
-                .get(source_register)
-                .wrapping_sub(self.registers.get(r3)),
-            (true, true) => self
-                .registers
-                .get(source_register)
-                .wrapping_sub(u32::from(immediate_value)),
+        let result = match (sub_opcode, i) {
+            (false, false) => alu::add(self.registers.get(source_register), self.registers.get(r3)),
+            (false, true) => alu::add(
+                self.registers.get(source_register),
+                u32::from(immediate_value),
+            ),
+            (true, false) => {
+                alu::subtract(self.registers.get(source_register), self.registers.get(r3))
+            }
+            (true, true) => alu::subtract(
+                self.registers.get(source_register),
+                u32::from(immediate_value),
+            ),
         };
-        self.registers
-            .status_registers
-            .set_conditions(alu::nop(value));
-        self.registers.set(destination_register, value);
+        self.registers.status_registers.set_conditions(result);
+        self.registers.set(destination_register, result.result);
     }
 
     fn move_shifted_register(&mut self, opcode: u16) {
