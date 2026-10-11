@@ -219,9 +219,10 @@ impl Cpu {
         const SECOND_OPERAND_MASK: u32 = 0x0000_0FFF;
         let immediate = opcode & IMMEDIATE_VALUE_BIT > 0;
         let sub_opcode = (opcode & OPCODE_MASK) >> OPCODE_SHIFT;
-        let set_conditions = opcode & SET_CONDITIONS_BIT > 0;
         let destination_register =
             (opcode & DESTINATION_REGISTER_MASK) >> DESTINATION_REGISTER_SHIFT;
+        let set_conditions = (opcode & SET_CONDITIONS_BIT > 0) && destination_register != 15;
+        let state_change = (opcode & SET_CONDITIONS_BIT > 0) && destination_register == 15;
         let first_operand_register =
             (opcode & FIRST_OPERAND_REGISTER_MASK) >> FIRST_OPERAND_REGISTER_SHIFT;
         let first_operand = self.registers.get(first_operand_register.truncate());
@@ -271,6 +272,9 @@ impl Cpu {
             self.registers
                 .set(destination_register.truncate(), result.result);
         }
+        if state_change {
+            self.registers.status_registers.load();
+        }
     }
 
     fn psr_transfer_mrs(&mut self, opcode: u32) {
@@ -285,7 +289,7 @@ impl Cpu {
                 .set(destination_register.truncate(), self.registers.current());
             return;
         }
-        let value = self.registers.status_registers.get();
+        let value = self.registers.status_registers.get_saved();
         self.registers.set(destination_register.truncate(), value);
     }
 

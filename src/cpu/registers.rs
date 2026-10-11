@@ -141,11 +141,15 @@ impl StatusRegisters {
         }
     }
 
+    pub fn load(&mut self) {
+        self.current.set(self.get_saved());
+    }
+
     pub fn set_supervisor(&mut self, value: u32) {
         self.saved_supervisor.set(value);
     }
 
-    pub fn get(&self) -> u32 {
+    pub fn get_saved(&self) -> u32 {
         match self.current.cpu_mode {
             CpuMode::Fiq => self.saved_fiq.into(),
             CpuMode::Irq => self.saved_irq.into(),
