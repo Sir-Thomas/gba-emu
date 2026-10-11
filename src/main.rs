@@ -14,9 +14,7 @@ fn main() -> Result {
 
     let mut args = std::env::args();
     args.next();
-    let rom: String = args
-        .next()
-        .unwrap_or_else(|| String::from("roms/thumb.gba"));
+    let rom: String = args.next().unwrap_or_else(|| String::from("roms/arm.gba"));
 
     let mut gba = Gba::new();
     gba.load_bios();
