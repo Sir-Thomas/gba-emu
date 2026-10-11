@@ -236,11 +236,23 @@ impl Cpu {
             self.registers.get(first_operand_register.truncate())
         };
         let alu_result = self.parse_second_operand(immediate, opcode & SECOND_OPERAND_MASK);
-        let second_operand = alu_result.result;
-        if set_conditions {
-            self.registers.status_registers.set_conditions(alu_result);
-        }
         let operation = DataProcessingOperation::from(sub_opcode);
+        let second_operand = alu_result.result;
+        if set_conditions
+            && matches!(
+                operation,
+                DataProcessingOperation::And
+                    | DataProcessingOperation::Xor
+                    | DataProcessingOperation::TestAnd
+                    | DataProcessingOperation::TestXor
+                    | DataProcessingOperation::Or
+                    | DataProcessingOperation::Move
+                    | DataProcessingOperation::BitClear
+                    | DataProcessingOperation::MoveNot
+            )
+        {
+            self.registers.status_registers.set_carry(alu_result.carry);
+        }
         let carry_flag = u32::from(self.registers.carry());
         let result = match operation {
             DataProcessingOperation::And => alu::and(first_operand, second_operand),
@@ -278,11 +290,11 @@ impl Cpu {
                 | DataProcessingOperation::TestSubtract
                 | DataProcessingOperation::TestAdd
         ) {
+            if state_change {
+                self.registers.status_registers.load();
+            }
             self.registers
                 .set(destination_register.truncate(), result.result);
-        }
-        if state_change {
-            self.registers.status_registers.load();
         }
     }
 

@@ -171,6 +171,12 @@ impl StatusRegisters {
         }
     }
 
+    pub fn set_carry(&mut self, carry: Option<bool>) {
+        if let Some(c) = carry {
+            self.current.carry = c;
+        }
+    }
+
     pub fn check_conditions(&self, conditions: u8) -> bool {
         match conditions {
             0b0000 => self.current.zero,
