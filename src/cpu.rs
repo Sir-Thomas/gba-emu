@@ -46,6 +46,18 @@ pub enum CpuError {
     UnreachableMoveCompareAddSubtractImmediateSubOpcode { sub_opcode: u16 },
     #[error("Unreachable Move Shifted Register Sub Opcode {sub_opcode:#06X}")]
     UnreachableMoveShiftedRegisterSubOpcode { sub_opcode: u16 },
+    #[error(
+        "Error executing instruction
+        Program Counter: {program_counter:#010X}
+        Opcode: {opcode:#010X}
+        {source}"
+    )]
+    InstructionContext {
+        program_counter: u32,
+        opcode: u32,
+        #[source]
+        source: Box<CpuError>,
+    },
 }
 
 enum DataProcessingOperation {
@@ -169,11 +181,17 @@ impl Cpu {
     }
 
     pub fn arm_cycle(&mut self, bus: &mut Bus) -> Result<(), CpuError> {
+        let program_counter = self.registers.program_counter;
         let opcode = bus.read_32(usize::try_from(self.registers.program_counter)?);
         self.registers.program_counter = self.registers.program_counter.wrapping_add(4);
         if self.registers.check_conditions(conditions(opcode))? {
             let instruction = decode::arm_instruction(opcode);
-            self.run_arm_instruction(instruction, opcode, bus)?;
+            self.run_arm_instruction(instruction, opcode, bus)
+                .map_err(|e| CpuError::InstructionContext {
+                    program_counter,
+                    opcode,
+                    source: Box::new(e),
+                })?;
         }
         Ok(())
     }
@@ -341,6 +359,9 @@ impl Cpu {
         if set_conditions {
             self.registers.status_registers.set_conditions(result);
         }
+        if state_change {
+            self.registers.status_registers.load()?;
+        }
         if !matches!(
             operation,
             DataProcessingOperation::TestAnd
@@ -348,9 +369,6 @@ impl Cpu {
                 | DataProcessingOperation::TestSubtract
                 | DataProcessingOperation::TestAdd
         ) {
-            if state_change {
-                self.registers.status_registers.load()?;
-            }
             self.registers
                 .set(destination_register.truncate(), result.result)?;
         }

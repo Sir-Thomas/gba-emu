@@ -165,7 +165,11 @@ impl StatusRegisters {
     }
 
     pub fn load(&mut self) -> Result<(), RegisterError> {
-        self.current.set(self.get_saved()?)
+        match self.get_saved() {
+            Ok(v) => self.current.set(v),
+            Err(RegisterError::LoadFromInvalidMode { .. }) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     pub fn set_supervisor(&mut self, value: u32) -> Result<(), RegisterError> {

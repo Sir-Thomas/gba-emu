@@ -93,7 +93,6 @@ impl GbaApp {
                 }
                 if let Err(e) = self.gba.cpu_cycle() {
                     self.mode = Mode::Stop;
-                    println!("Error: {e:?}");
                     println!("{e}");
                     return;
                 }
