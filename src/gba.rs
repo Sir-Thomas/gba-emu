@@ -1,13 +1,25 @@
 #![allow(dead_code)]
 
 use std::fs::read;
+use thiserror::Error;
 
 use crate::bus::{Bus, GAME_PAK_START_ADDRESS};
-use crate::cpu::{Cpu, Instruction};
-use crate::ppu::{DISPSTAT, Ppu};
+use crate::cpu::registers::RegisterError;
+use crate::cpu::{Cpu, CpuError, Instruction};
+use crate::ppu::{DISPSTAT, Ppu, PpuError};
 
 pub const DISPLAY_WIDTH: usize = 240;
 pub const DISPLAY_HEIGHT: usize = 160;
+
+#[derive(Error, Debug)]
+pub enum GbaError {
+    #[error("Cpu Error: {0}")]
+    CpuError(#[from] CpuError),
+    #[error("Register Error: {0}")]
+    RegisterError(#[from] RegisterError),
+    #[error("PPU Error: {0}")]
+    PpuError(#[from] PpuError),
+}
 
 pub struct Gba {
     bus: Bus,
@@ -28,8 +40,8 @@ impl Gba {
         self.cpu.back();
     }
 
-    pub fn cpu_cycle(&mut self) {
-        self.cpu.cpu_cycle(&mut self.bus);
+    pub fn cpu_cycle(&mut self) -> Result<(), GbaError> {
+        self.cpu.cpu_cycle(&mut self.bus).map_err(Into::into)
     }
 
     pub fn set_vblank(&mut self) {
@@ -52,8 +64,8 @@ impl Gba {
         self.bus.write_16(DISPSTAT, temp & !2);
     }
 
-    pub fn next_instruction(&self) -> (u32, Instruction) {
-        self.cpu.next_instruction(&self.bus)
+    pub fn next_instruction(&self) -> Result<(u32, Instruction), GbaError> {
+        self.cpu.next_instruction(&self.bus).map_err(Into::into)
     }
 
     pub fn insert_opcode(&mut self, value: u16) {
@@ -94,7 +106,7 @@ impl Gba {
     }
 
     pub fn register(&self, register: u16) -> u32 {
-        self.cpu.registers.get(register)
+        self.cpu.registers.get(register).expect("Invalid Register")
     }
 
     pub fn load_bios(&mut self) {
@@ -118,7 +130,7 @@ impl Gba {
         }
     }
 
-    pub fn draw(&mut self) -> &[u16] {
-        self.ppu.draw(&mut self.bus)
+    pub fn draw(&mut self) -> Result<&[u16], GbaError> {
+        self.ppu.draw(&mut self.bus).map_err(Into::into)
     }
 }

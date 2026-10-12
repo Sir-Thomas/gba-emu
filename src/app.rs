@@ -91,7 +91,12 @@ impl GbaApp {
                         return;
                     }
                 }
-                self.gba.cpu_cycle();
+                if let Err(e) = self.gba.cpu_cycle() {
+                    self.mode = Mode::Stop;
+                    println!("Error: {e:?}");
+                    println!("{e}");
+                    return;
+                }
                 if self.step {
                     self.mode = Mode::Stop;
                     self.step = false;
@@ -125,7 +130,11 @@ impl eframe::App for GbaApp {
         // need to update graphics mid-frame.
         if self.mode == Mode::Run {
             self.run();
-            let image = framebuffer_to_image(self.gba.draw());
+            let image = framebuffer_to_image(
+                self.gba
+                    .draw()
+                    .unwrap_or(&[0; DISPLAY_WIDTH * DISPLAY_HEIGHT]),
+            );
             self.display_texture.set(image, TextureOptions::NEAREST);
         }
         CentralPanel::default().show(ui, |ui| {
@@ -154,7 +163,7 @@ impl eframe::App for GbaApp {
                     self.mode = Mode::Run;
                 }
             });
-            let (opcode, instruction) = self.gba.next_instruction();
+            let (opcode, instruction) = self.gba.next_instruction().unwrap();
             ui.label(format!("Next Instruction: {opcode:#06X} {instruction:?}"));
             // if ui.add(Button::new("Insert opcode")).clicked() {
             // if let Ok(value) = opcode.parse() {

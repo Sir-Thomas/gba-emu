@@ -1,18 +1,52 @@
 #![allow(dead_code)]
 
-const SOFTWARE_INTERRUPT_ADDRESS: u32 = 0x0000_0008;
+use std::num::TryFromIntError;
+
+use thiserror::Error;
 
 pub use crate::cpu::decode::Instruction;
 use crate::{
     bus::Bus,
-    cpu::alu::AluResult,
-    cpu::decode::{ArmInstruction, ThumbInstruction},
-    cpu::registers::{CpuMode, InstructionSet, Registers},
+    cpu::{
+        alu::AluResult,
+        decode::{ArmInstruction, ThumbInstruction},
+        registers::{CpuMode, InstructionSet, RegisterError, Registers},
+    },
 };
 
 mod alu;
 mod decode;
-mod registers;
+pub mod registers;
+
+const SOFTWARE_INTERRUPT_ADDRESS: u32 = 0x0000_0008;
+
+#[derive(Error, Debug)]
+pub enum CpuError {
+    #[error("Could not convert u32 to usize")]
+    UsizeError(#[from] TryFromIntError),
+    #[error("Register Error: {0}")]
+    Register(#[from] RegisterError),
+    #[error("Unimplemented opcode {opcode:#010X} at {pc:#010X}")]
+    Unimplemented { opcode: u32, pc: u32 },
+    #[error("Data Processing: Invalid Operation {operation:#03X}")]
+    InvalidDataProcessingOperation { operation: u32 },
+    #[error("Sign extend should not be used with store")]
+    SignExtendWithStore,
+    #[error("Undefined Arm Instruction {opcode:#010X}")]
+    UndefinedArmInstruction { opcode: u32 },
+    #[error("Invalid shift type: {shift_type:#06X}")]
+    InvalidShiftType { shift_type: u32 },
+    #[error("Unimplemented Thumb opcode: {opcode:#06X}")]
+    UnimplementedThumbInstruction { opcode: u16 },
+    #[error("Unreachable Hi Register Operations/Branch Exchange sub opcode {sub_opcode:#06X}")]
+    UnreachableHiRegisterOperationsBranchExchangeSubOpcode { sub_opcode: u16 },
+    #[error("Unreachable Alu Operations sub opcode {sub_opcode:#06X}")]
+    UnreachableAluOperationsSubOpcode { sub_opcode: u16 },
+    #[error("Unreachable Move Compare Add Subtract Immediate Sub Opcode {sub_opcode:#06X}")]
+    UnreachableMoveCompareAddSubtractImmediateSubOpcode { sub_opcode: u16 },
+    #[error("Unreachable Move Shifted Register Sub Opcode {sub_opcode:#06X}")]
+    UnreachableMoveShiftedRegisterSubOpcode { sub_opcode: u16 },
+}
 
 enum DataProcessingOperation {
     And,                      // 0000
@@ -33,26 +67,28 @@ enum DataProcessingOperation {
     MoveNot,                  // 1111
 }
 
-impl From<u32> for DataProcessingOperation {
-    fn from(value: u32) -> DataProcessingOperation {
-        match value & 0x0F {
-            0x0 => DataProcessingOperation::And,
-            0x1 => DataProcessingOperation::Xor,
-            0x2 => DataProcessingOperation::Subtract,
-            0x3 => DataProcessingOperation::ReverseSubtract,
-            0x4 => DataProcessingOperation::Add,
-            0x5 => DataProcessingOperation::AddWithCarry,
-            0x6 => DataProcessingOperation::SubtractWithCarry,
-            0x7 => DataProcessingOperation::ReverseSubtractWithCarry,
-            0x8 => DataProcessingOperation::TestAnd,
-            0x9 => DataProcessingOperation::TestXor,
-            0xA => DataProcessingOperation::TestSubtract,
-            0xB => DataProcessingOperation::TestAdd,
-            0xC => DataProcessingOperation::Or,
-            0xD => DataProcessingOperation::Move,
-            0xE => DataProcessingOperation::BitClear,
-            0xF => DataProcessingOperation::MoveNot,
-            _ => unreachable!("Data Processing: Invalid Operation {value:#03X}"),
+impl TryFrom<u32> for DataProcessingOperation {
+    type Error = CpuError;
+
+    fn try_from(operation: u32) -> Result<DataProcessingOperation, CpuError> {
+        match operation & 0x0F {
+            0x0 => Ok(DataProcessingOperation::And),
+            0x1 => Ok(DataProcessingOperation::Xor),
+            0x2 => Ok(DataProcessingOperation::Subtract),
+            0x3 => Ok(DataProcessingOperation::ReverseSubtract),
+            0x4 => Ok(DataProcessingOperation::Add),
+            0x5 => Ok(DataProcessingOperation::AddWithCarry),
+            0x6 => Ok(DataProcessingOperation::SubtractWithCarry),
+            0x7 => Ok(DataProcessingOperation::ReverseSubtractWithCarry),
+            0x8 => Ok(DataProcessingOperation::TestAnd),
+            0x9 => Ok(DataProcessingOperation::TestXor),
+            0xA => Ok(DataProcessingOperation::TestSubtract),
+            0xB => Ok(DataProcessingOperation::TestAdd),
+            0xC => Ok(DataProcessingOperation::Or),
+            0xD => Ok(DataProcessingOperation::Move),
+            0xE => Ok(DataProcessingOperation::BitClear),
+            0xF => Ok(DataProcessingOperation::MoveNot),
+            _ => Err(CpuError::InvalidDataProcessingOperation { operation }),
         }
     }
 }
@@ -66,7 +102,7 @@ impl Cpu {
     pub fn new() -> Self {
         let mut cpu = Self::default();
         cpu.registers.set_program_counter(0x0800_0000);
-        cpu.registers.set_stack_pointer(0x03007F00);
+        cpu.registers.set_stack_pointer(0x0300_7F00);
         cpu
     }
 
@@ -104,15 +140,15 @@ impl Cpu {
         self.registers.stack_pointer
     }
 
-    pub fn next_instruction(&self, bus: &Bus) -> (u32, Instruction) {
+    pub fn next_instruction(&self, bus: &Bus) -> Result<(u32, Instruction), CpuError> {
         if self.registers.state() == InstructionSet::Arm {
-            let opcode = bus.read_32(self.registers.program_counter as usize);
+            let opcode = bus.read_32(usize::try_from(self.registers.program_counter)?);
             let instruction = decode::arm_instruction(opcode);
-            (opcode, Instruction::Arm(instruction))
+            Ok((opcode, Instruction::Arm(instruction)))
         } else {
-            let opcode = bus.read_16(self.registers.program_counter as usize);
+            let opcode = bus.read_16(usize::try_from(self.registers.program_counter)?);
             let instruction = decode::thumb_instruction(opcode);
-            (u32::from(opcode), Instruction::Thumb(instruction))
+            Ok((u32::from(opcode), Instruction::Thumb(instruction)))
         }
     }
 
@@ -125,23 +161,29 @@ impl Cpu {
         }
     }
 
-    pub fn cpu_cycle(&mut self, bus: &mut Bus) {
+    pub fn cpu_cycle(&mut self, bus: &mut Bus) -> Result<(), CpuError> {
         match self.registers.state() {
             InstructionSet::Arm => self.arm_cycle(bus),
             InstructionSet::Thumb => self.thumb_cycle(bus),
         }
     }
 
-    pub fn arm_cycle(&mut self, bus: &mut Bus) {
-        let opcode = bus.read_32(self.registers.program_counter as usize);
+    pub fn arm_cycle(&mut self, bus: &mut Bus) -> Result<(), CpuError> {
+        let opcode = bus.read_32(usize::try_from(self.registers.program_counter)?);
         self.registers.program_counter = self.registers.program_counter.wrapping_add(4);
-        if self.registers.check_conditions(conditions(opcode)) {
+        if self.registers.check_conditions(conditions(opcode))? {
             let instruction = decode::arm_instruction(opcode);
-            self.run_arm_instruction(instruction, opcode, bus);
+            self.run_arm_instruction(instruction, opcode, bus)?;
         }
+        Ok(())
     }
 
-    fn run_arm_instruction(&mut self, instruction: ArmInstruction, opcode: u32, bus: &mut Bus) {
+    fn run_arm_instruction(
+        &mut self,
+        instruction: ArmInstruction,
+        opcode: u32,
+        bus: &mut Bus,
+    ) -> Result<(), CpuError> {
         match instruction {
             ArmInstruction::DataProcessing => self.data_processing(opcode),
             ArmInstruction::PsrTransferMRS => self.psr_transfer_mrs(opcode),
@@ -157,7 +199,7 @@ impl Cpu {
                 self.halfword_data_transfer_immediate_offset(opcode, bus)
             }
             ArmInstruction::SingleDataTransfer => self.single_data_transfer(opcode, bus),
-            ArmInstruction::Undefined => unreachable!(),
+            ArmInstruction::Undefined => Err(CpuError::UndefinedArmInstruction { opcode }),
             ArmInstruction::BlockDataTransfer => self.block_data_transfer(opcode, bus),
             ArmInstruction::Branch => self.branch(opcode),
             ArmInstruction::CoprocessorDataTransfer => self.coprocessor_data_transfer(opcode),
@@ -169,7 +211,7 @@ impl Cpu {
         }
     }
 
-    fn shift(&mut self, operand: u32) -> AluResult {
+    fn shift(&mut self, operand: u32) -> Result<AluResult, CpuError> {
         const IMMEDIATE_VALUE_MASK: u32 = 0x0000_0F80;
         const IMMEDIATE_VALUE_SHIFT: usize = 7;
         const SHIFT_REGISTER_MASK: u32 = 0x0000_0F00;
@@ -184,41 +226,48 @@ impl Cpu {
             (operand & IMMEDIATE_VALUE_MASK) >> IMMEDIATE_VALUE_SHIFT
         } else {
             let register = (operand & SHIFT_REGISTER_MASK) >> SHIFT_REGISTER_SHIFT;
-            self.registers.get(register.truncate()) & 0x0000_00FF
+            self.registers.get(register.truncate())? & 0x0000_00FF
         };
         let source_register = (operand & SOURCE_REGISTER_MASK).truncate();
         // instruction pre-fetching work around
         let source_value = if source_register == 15 && !immediate {
-            self.registers.get(source_register).wrapping_add(4)
+            self.registers.get(source_register)?.wrapping_add(4)
         } else {
-            self.registers.get(source_register)
+            self.registers.get(source_register)?
         };
         match (shift_type, immediate && shift == 0) {
-            (0b00, _) => alu::shift_left(source_value, shift),
-            (0b01, true) => alu::shift_right(source_value, 32),
-            (0b01, false) => alu::shift_right(source_value, shift),
-            (0b10, true) => alu::arithmetic_shift_right(source_value, 32),
-            (0b10, false) => alu::arithmetic_shift_right(source_value, shift),
-            (0b11, true) => alu::rotate_right_carry(source_value, self.registers.carry()),
-            (0b11, false) => alu::rotate_right(source_value, shift),
-            _ => unreachable!("Invalid shift type: {shift_type:#06X}"),
+            (0b00, _) => Ok(alu::shift_left(source_value, shift)),
+            (0b01, true) => Ok(alu::shift_right(source_value, 32)),
+            (0b01, false) => Ok(alu::shift_right(source_value, shift)),
+            (0b10, true) => Ok(alu::arithmetic_shift_right(source_value, 32)),
+            (0b10, false) => Ok(alu::arithmetic_shift_right(source_value, shift)),
+            (0b11, true) => Ok(alu::rotate_right_carry(
+                source_value,
+                self.registers.carry(),
+            )),
+            (0b11, false) => Ok(alu::rotate_right(source_value, shift)),
+            _ => Err(CpuError::InvalidShiftType { shift_type }),
         }
     }
 
-    fn parse_second_operand(&mut self, immediate: bool, operand: u32) -> AluResult {
+    fn parse_second_operand(
+        &mut self,
+        immediate: bool,
+        operand: u32,
+    ) -> Result<AluResult, CpuError> {
         const ROTATE_MASK: u32 = 0x0000_0F00;
         const ROTATE_SHIFT: usize = 8;
         const IMMEDIATE_MASK: u32 = 0x0000_00FF;
         if immediate {
             let rotate = ((operand & ROTATE_MASK) >> ROTATE_SHIFT).wrapping_mul(2);
             let value = operand & IMMEDIATE_MASK;
-            alu::rotate_right(value, rotate)
+            Ok(alu::rotate_right(value, rotate))
         } else {
             self.shift(operand)
         }
     }
 
-    fn data_processing(&mut self, opcode: u32) {
+    fn data_processing(&mut self, opcode: u32) -> Result<(), CpuError> {
         const IMMEDIATE_VALUE_BIT: u32 = 1 << 25;
         const OPCODE_MASK: u32 = 0x01E0_0000;
         const OPCODE_SHIFT: usize = 21;
@@ -239,13 +288,13 @@ impl Cpu {
         // instruction pre-fetching work around
         let first_operand = if first_operand_register == 15 && !immediate && opcode & (1 << 4) > 0 {
             self.registers
-                .get(first_operand_register.truncate())
+                .get(first_operand_register.truncate())?
                 .wrapping_add(4)
         } else {
-            self.registers.get(first_operand_register.truncate())
+            self.registers.get(first_operand_register.truncate())?
         };
-        let alu_result = self.parse_second_operand(immediate, opcode & SECOND_OPERAND_MASK);
-        let operation = DataProcessingOperation::from(sub_opcode);
+        let alu_result = self.parse_second_operand(immediate, opcode & SECOND_OPERAND_MASK)?;
+        let operation = DataProcessingOperation::try_from(sub_opcode)?;
         let second_operand = alu_result.result;
         if set_conditions
             && matches!(
@@ -300,14 +349,15 @@ impl Cpu {
                 | DataProcessingOperation::TestAdd
         ) {
             if state_change {
-                self.registers.status_registers.load();
+                self.registers.status_registers.load()?;
             }
             self.registers
-                .set(destination_register.truncate(), result.result);
+                .set(destination_register.truncate(), result.result)?;
         }
+        Ok(())
     }
 
-    fn psr_transfer_mrs(&mut self, opcode: u32) {
+    fn psr_transfer_mrs(&mut self, opcode: u32) -> Result<(), CpuError> {
         const SOURCE_PSR_BIT: u32 = 1 << 22;
         const DESTINATION_REGISTER_MASK: u32 = 0x0000_F000;
         const DESTINATION_REGISTER_SHIFT: usize = 12;
@@ -316,14 +366,15 @@ impl Cpu {
             (opcode & DESTINATION_REGISTER_MASK) >> DESTINATION_REGISTER_SHIFT;
         if !saved {
             self.registers
-                .set(destination_register.truncate(), self.registers.current());
-            return;
+                .set(destination_register.truncate(), self.registers.current())?;
+            return Ok(());
         }
-        let value = self.registers.status_registers.get_saved();
-        self.registers.set(destination_register.truncate(), value);
+        let value = self.registers.status_registers.get_saved()?;
+        self.registers.set(destination_register.truncate(), value)?;
+        Ok(())
     }
 
-    fn psr_transfer_msr(&mut self, opcode: u32) {
+    fn psr_transfer_msr(&mut self, opcode: u32) -> Result<(), CpuError> {
         const IMMEDIATE_VALUE_BIT: u32 = 1 << 25;
         const SOURCE_PSR_BIT: u32 = 1 << 22;
         const MODE_INCLUDED_BIT: u32 = 1 << 16;
@@ -339,19 +390,20 @@ impl Cpu {
             (opcode & IMMEDIATE_VALUE_MASK).rotate_right(rotate.wrapping_mul(2))
         } else {
             let register = opcode & REGISTER_MASK;
-            self.registers.get(register.truncate())
+            self.registers.get(register.truncate())?
         };
         if !mode_included {
             value = (value & !0b11111) | (self.registers.current() & 0b11111);
         }
         if !saved {
-            self.registers.status_registers.set_current(value);
-            return;
+            self.registers.status_registers.set_current(value)?;
+            return Ok(());
         }
-        self.registers.status_registers.save(value);
+        self.registers.status_registers.save(value)?;
+        Ok(())
     }
 
-    fn multiply(&mut self, opcode: u32) {
+    fn multiply(&mut self, opcode: u32) -> Result<(), CpuError> {
         const ACCUMULATE: u32 = 1 << 21;
         const SET_CONDITION_CODE: u32 = 1 << 20;
         const DESTINATION_REGISTER_MASK: u32 = 0x000F_0000;
@@ -372,34 +424,35 @@ impl Cpu {
         let source_register_m = (opcode & SOURCE_REGISTER_M_MASK).truncate();
         let value = if accumulate {
             self.registers
-                .get(source_register_m)
-                .wrapping_mul(self.registers.get(source_register_s))
-                .wrapping_add(self.registers.get(source_register_n))
+                .get(source_register_m)?
+                .wrapping_mul(self.registers.get(source_register_s)?)
+                .wrapping_add(self.registers.get(source_register_n)?)
         } else {
             self.registers
-                .get(source_register_m)
-                .wrapping_mul(self.registers.get(source_register_s))
+                .get(source_register_m)?
+                .wrapping_mul(self.registers.get(source_register_s)?)
         };
-        self.registers.set(destination_register.truncate(), value);
+        self.registers.set(destination_register.truncate(), value)?;
         if set_condition_code {
             self.registers.set_zero(value == 0);
             self.registers.set_negative(value & 0x8000_0000 > 0);
         }
+        Ok(())
     }
 
-    fn multiply_long(&self, opcode: u32) {
+    fn multiply_long(&self, opcode: u32) -> Result<(), CpuError> {
         todo!("MultiplyLong {opcode:#010X}");
     }
 
-    fn single_data_swap(&self, opcode: u32) {
+    fn single_data_swap(&self, opcode: u32) -> Result<(), CpuError> {
         todo!("SingleDataSwap {opcode:#010X}");
     }
 
-    fn branch_and_exchange(&mut self, opcode: u32) {
+    fn branch_and_exchange(&mut self, opcode: u32) -> Result<(), CpuError> {
         const REGISTER_MASK: u32 = 0x0000_000F;
         const THUMB_MODE_BIT: u32 = 1;
         let register = opcode & REGISTER_MASK;
-        let address = self.registers.get(register.truncate());
+        let address = self.registers.get(register.truncate())?;
         let thumb = address & THUMB_MODE_BIT > 0;
         if thumb {
             self.registers.set_state(InstructionSet::Thumb);
@@ -408,9 +461,14 @@ impl Cpu {
             self.registers.set_state(InstructionSet::Arm);
             self.registers.program_counter = address & !3;
         }
+        Ok(())
     }
 
-    fn halfword_data_transfer_register_offset(&mut self, opcode: u32, bus: &mut Bus) {
+    fn halfword_data_transfer_register_offset(
+        &mut self,
+        opcode: u32,
+        bus: &mut Bus,
+    ) -> Result<(), CpuError> {
         const PRE_POST_INDEXING_BIT: u32 = 1 << 24;
         const UP_DOWN_BIT: u32 = 1 << 23;
         const WRITE_BACK_BIT: u32 = 1 << 21;
@@ -433,53 +491,58 @@ impl Cpu {
         let signed = opcode & SIGNED_BIT > 0;
         let halfword = opcode & HALFWORD_BIT > 0;
         let offset_register = opcode & OFFSET_REGISTER_MASK;
-        let offset = self.registers.get(offset_register.truncate());
+        let offset = self.registers.get(offset_register.truncate())?;
         let address = match (pre_index, up) {
-            (true, true) => self.registers.get(base_register).wrapping_add(offset),
-            (true, false) => self.registers.get(base_register).wrapping_sub(offset),
-            (false, _) => self.registers.get(base_register),
+            (true, true) => self.registers.get(base_register)?.wrapping_add(offset),
+            (true, false) => self.registers.get(base_register)?.wrapping_sub(offset),
+            (false, _) => self.registers.get(base_register)?,
         };
         match (write_back, pre_index, up) {
             // docs say post-index always writes back
             (false, true, _) => {}
             (_, false, false) => self
                 .registers
-                .set(base_register, address.wrapping_sub(offset)),
+                .set(base_register, address.wrapping_sub(offset))?,
             (_, false, true) => self
                 .registers
-                .set(base_register, address.wrapping_add(offset)),
-            (true, true, _) => self.registers.set(base_register, address),
+                .set(base_register, address.wrapping_add(offset))?,
+            (true, true, _) => self.registers.set(base_register, address)?,
         }
         match (halfword, load, signed) {
             (true, true, true) => self.registers.set(
                 source_destination_register,
-                sign_extend(bus.read_16(address as usize).into(), 16),
-            ),
+                sign_extend(bus.read_16(usize::try_from(address)?).into(), 16),
+            )?,
             (true, true, false) => self.registers.set(
                 source_destination_register,
-                u32::from(bus.read_16(address as usize)),
-            ),
+                u32::from(bus.read_16(usize::try_from(address)?)),
+            )?,
             (true, false, false) => bus.write_16(
-                address as usize,
-                self.registers.get(source_destination_register).truncate(),
+                usize::try_from(address)?,
+                self.registers.get(source_destination_register)?.truncate(),
             ),
             (false, true, true) => self.registers.set(
                 source_destination_register,
-                sign_extend(bus.read_8(address as usize).into(), 8),
-            ),
+                sign_extend(bus.read_8(usize::try_from(address)?).into(), 8),
+            )?,
             (false, true, false) => self.registers.set(
                 source_destination_register,
-                u32::from(bus.read_8(address as usize)),
-            ),
+                u32::from(bus.read_8(usize::try_from(address)?)),
+            )?,
             (false, false, false) => bus.write_8(
-                address as usize,
-                self.registers.get(source_destination_register).truncate(),
+                usize::try_from(address)?,
+                self.registers.get(source_destination_register)?.truncate(),
             ),
-            _ => unreachable!("Sign extend should not be used with store"),
+            _ => return Err(CpuError::SignExtendWithStore),
         }
+        Ok(())
     }
 
-    fn halfword_data_transfer_immediate_offset(&mut self, opcode: u32, bus: &mut Bus) {
+    fn halfword_data_transfer_immediate_offset(
+        &mut self,
+        opcode: u32,
+        bus: &mut Bus,
+    ) -> Result<(), CpuError> {
         const PRE_POST_INDEXING_BIT: u32 = 1 << 24;
         const UP_DOWN_BIT: u32 = 1 << 23;
         const WRITE_BACK_BIT: u32 = 1 << 21;
@@ -506,50 +569,51 @@ impl Cpu {
         let offset = ((opcode & IMMEDIATE_OFFSET_HIGH_MASK) >> IMMEDIATE_OFFSET_HIGH_SHIFT)
             | (opcode & IMMEDIATE_OFFSET_LOW_MASK);
         let address = match (pre_index, up) {
-            (true, true) => self.registers.get(base_register).wrapping_add(offset),
-            (true, false) => self.registers.get(base_register).wrapping_sub(offset),
-            (false, _) => self.registers.get(base_register),
+            (true, true) => self.registers.get(base_register)?.wrapping_add(offset),
+            (true, false) => self.registers.get(base_register)?.wrapping_sub(offset),
+            (false, _) => self.registers.get(base_register)?,
         };
         match (write_back, pre_index, up) {
             (false, true, _) => {}
             (_, false, false) => self
                 .registers
-                .set(base_register, address.wrapping_sub(offset)),
+                .set(base_register, address.wrapping_sub(offset))?,
             (_, false, true) => self
                 .registers
-                .set(base_register, address.wrapping_add(offset)),
-            (true, true, _) => self.registers.set(base_register, address),
+                .set(base_register, address.wrapping_add(offset))?,
+            (true, true, _) => self.registers.set(base_register, address)?,
         }
         match (halfword, load, signed) {
             (true, true, true) => self.registers.set(
                 source_destination_register,
-                sign_extend(bus.read_16(address as usize).into(), 16),
-            ),
+                sign_extend(bus.read_16(usize::try_from(address)?).into(), 16),
+            )?,
             (true, true, false) => self.registers.set(
                 source_destination_register,
-                u32::from(bus.read_16(address as usize)),
-            ),
+                u32::from(bus.read_16(usize::try_from(address)?)),
+            )?,
             (true, false, false) => bus.write_16(
-                address as usize,
-                self.registers.get(source_destination_register).truncate(),
+                usize::try_from(address)?,
+                self.registers.get(source_destination_register)?.truncate(),
             ),
             (false, true, true) => self.registers.set(
                 source_destination_register,
-                sign_extend(bus.read_8(address as usize).into(), 8),
-            ),
+                sign_extend(bus.read_8(usize::try_from(address)?).into(), 8),
+            )?,
             (false, true, false) => self.registers.set(
                 source_destination_register,
-                u32::from(bus.read_8(address as usize)),
-            ),
+                u32::from(bus.read_8(usize::try_from(address)?)),
+            )?,
             (false, false, false) => bus.write_8(
-                address as usize,
-                self.registers.get(source_destination_register).truncate(),
+                usize::try_from(address)?,
+                self.registers.get(source_destination_register)?.truncate(),
             ),
-            _ => unreachable!("Sign extend should not be used with store"),
+            _ => return Err(CpuError::SignExtendWithStore),
         }
+        Ok(())
     }
 
-    fn single_data_transfer(&mut self, opcode: u32, bus: &mut Bus) {
+    fn single_data_transfer(&mut self, opcode: u32, bus: &mut Bus) -> Result<(), CpuError> {
         const IMMEDIATE_OFFSET_BIT: u32 = 1 << 25;
         const PRE_POST_INDEXING_BIT: u32 = 1 << 24;
         const UP_DOWN_BIT: u32 = 1 << 23;
@@ -577,43 +641,45 @@ impl Cpu {
         let offset = if immediate {
             opcode & IMMEDIATE_OFFSET_MASK
         } else {
-            self.shift(opcode & IMMEDIATE_OFFSET_MASK).result
+            self.shift(opcode & IMMEDIATE_OFFSET_MASK)?.result
         };
         let address = match (pre_index, up) {
-            (true, true) => self.registers.get(base_register).wrapping_add(offset),
-            (true, false) => self.registers.get(base_register).wrapping_sub(offset),
-            (false, _) => self.registers.get(base_register),
+            (true, true) => self.registers.get(base_register)?.wrapping_add(offset),
+            (true, false) => self.registers.get(base_register)?.wrapping_sub(offset),
+            (false, _) => self.registers.get(base_register)?,
         };
         match (write_back, pre_index, up) {
             (false, true, _) => {}
             (_, false, false) => self
                 .registers
-                .set(base_register, address.wrapping_sub(offset)),
+                .set(base_register, address.wrapping_sub(offset))?,
             (_, false, true) => self
                 .registers
-                .set(base_register, address.wrapping_add(offset)),
-            (true, true, _) => self.registers.set(base_register, address),
+                .set(base_register, address.wrapping_add(offset))?,
+            (true, true, _) => self.registers.set(base_register, address)?,
         }
         match (byte, load) {
             (true, true) => self.registers.set(
                 source_destination_register,
-                u32::from(bus.read_8(address as usize)),
-            ),
+                u32::from(bus.read_8(usize::try_from(address)?)),
+            )?,
             (true, false) => bus.write_8(
-                address as usize,
-                self.registers.get(source_destination_register).truncate(),
+                usize::try_from(address)?,
+                self.registers.get(source_destination_register)?.truncate(),
             ),
-            (false, true) => self
-                .registers
-                .set(source_destination_register, bus.read_32(address as usize)),
+            (false, true) => self.registers.set(
+                source_destination_register,
+                bus.read_32(usize::try_from(address)?),
+            )?,
             (false, false) => bus.write_32(
-                address as usize,
-                self.registers.get(source_destination_register),
+                usize::try_from(address)?,
+                self.registers.get(source_destination_register)?,
             ),
         }
+        Ok(())
     }
 
-    fn block_data_transfer(&mut self, opcode: u32, bus: &mut Bus) {
+    fn block_data_transfer(&mut self, opcode: u32, bus: &mut Bus) -> Result<(), CpuError> {
         const PRE_POST_INDEXING_BIT: u32 = 1 << 24;
         const UP_DOWN_BIT: u32 = 1 << 23;
         const PSR_FORCE_USER_BIT: u32 = 1 << 22;
@@ -626,13 +692,13 @@ impl Cpu {
         let up = opcode & UP_DOWN_BIT > 0;
         let psr = opcode & PSR_FORCE_USER_BIT > 0;
         if psr {
-            unimplemented!("ARM: Block Data Transfer - PSR & force user bit set");
+            todo!("ARM: Block Data Transfer - PSR & force user bit set");
         }
         let write_back = opcode & WRITE_BACK_BIT > 0;
         let load = opcode & LOAD_STORE_BIT > 0;
         let base_register = ((opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT).truncate();
         let register_list = opcode & REGISTER_LIST_MASK;
-        let base_value = self.registers.get(base_register);
+        let base_value = self.registers.get(base_register)?;
         let byte_count = register_list.count_ones().wrapping_mul(4);
         let mut address = match (up, pre_index) {
             (true, true) => base_value.wrapping_add(4),
@@ -642,9 +708,10 @@ impl Cpu {
         };
         for register in (0..=15).filter(|r| register_list & (1 << r) > 0) {
             if load {
-                self.registers.set(register, bus.read_32(address as usize));
+                self.registers
+                    .set(register, bus.read_32(usize::try_from(address)?))?;
             } else {
-                bus.write_32(address as usize, self.registers.get(register));
+                bus.write_32(usize::try_from(address)?, self.registers.get(register)?);
             }
             address = address.wrapping_add(4);
         }
@@ -654,11 +721,12 @@ impl Cpu {
             } else {
                 base_value.wrapping_sub(byte_count)
             };
-            self.registers.set(base_register, final_address);
+            self.registers.set(base_register, final_address)?;
         }
+        Ok(())
     }
 
-    fn branch(&mut self, opcode: u32) {
+    fn branch(&mut self, opcode: u32) -> Result<(), CpuError> {
         const LINK_MASK: u32 = 0x0100_0000;
         const OFFSET_MASK: u32 = 0x00FF_FFFF;
         let link = opcode & LINK_MASK > 0;
@@ -668,39 +736,46 @@ impl Cpu {
         let offset = sign_extend((opcode & OFFSET_MASK) << 2, 26);
         self.registers.program_counter = self
             .registers
-            .get(15)
+            .get(15)?
             .wrapping_add_signed(offset.cast_signed());
+        Ok(())
     }
 
-    fn coprocessor_data_transfer(&self, opcode: u32) {
+    fn coprocessor_data_transfer(&self, opcode: u32) -> Result<(), CpuError> {
         todo!("CoprocessorDataTransfer {opcode:#010X}");
     }
 
-    fn coprocessor_data_operation(&self, opcode: u32) {
+    fn coprocessor_data_operation(&self, opcode: u32) -> Result<(), CpuError> {
         todo!("CoprocessorDataOperation {opcode:#010X}");
     }
 
-    fn coprocessor_register_transfer(&self, opcode: u32) {
+    fn coprocessor_register_transfer(&self, opcode: u32) -> Result<(), CpuError> {
         todo!("CoprocessorRegisterTransfer {opcode:#010X}");
     }
 
-    fn arm_software_interrupt(&mut self) {
+    fn arm_software_interrupt(&mut self) -> Result<(), CpuError> {
         self.registers.link_register = self.registers.program_counter;
         self.registers
             .status_registers
-            .set_supervisor(self.registers.current());
+            .set_supervisor(self.registers.current())?;
         self.registers.program_counter = SOFTWARE_INTERRUPT_ADDRESS;
         self.registers.set_mode(CpuMode::Supervisor);
+        Ok(())
     }
 
-    pub fn thumb_cycle(&mut self, bus: &mut Bus) {
-        let opcode = bus.read_16(self.registers.program_counter as usize);
+    pub fn thumb_cycle(&mut self, bus: &mut Bus) -> Result<(), CpuError> {
+        let opcode = bus.read_16(usize::try_from(self.registers.program_counter)?);
         let instruction = decode::thumb_instruction(opcode);
         self.registers.program_counter = self.registers.program_counter.wrapping_add(2);
-        self.run_thumb_instruction(instruction, opcode, bus);
+        self.run_thumb_instruction(instruction, opcode, bus)
     }
 
-    fn run_thumb_instruction(&mut self, instruction: ThumbInstruction, opcode: u16, bus: &mut Bus) {
+    fn run_thumb_instruction(
+        &mut self,
+        instruction: ThumbInstruction,
+        opcode: u16,
+        bus: &mut Bus,
+    ) -> Result<(), CpuError> {
         match instruction {
             ThumbInstruction::SoftwareInterrupt => self.thumb_software_interrupt(),
             ThumbInstruction::UnconditionalBranch => self.unconditional_branch(opcode),
@@ -713,70 +788,69 @@ impl Cpu {
             ThumbInstruction::SPRelativeLoadStore => self.sp_relative_load_store(opcode, bus),
             ThumbInstruction::LoadAddress => self.load_address(opcode),
             ThumbInstruction::LoadStoreWithImmediateOffset => {
-                self.load_store_with_immediate_offset(opcode, bus);
+                self.load_store_with_immediate_offset(opcode, bus)
             }
             ThumbInstruction::LoadStoreWithRegisterOffset => {
-                self.load_store_with_register_offset(opcode, bus);
+                self.load_store_with_register_offset(opcode, bus)
             }
             ThumbInstruction::LoadStoreSignExtendedByteHalfword => {
-                self.load_store_sign_extended_byte_halfword(opcode, bus);
+                self.load_store_sign_extended_byte_halfword(opcode, bus)
             }
             ThumbInstruction::PCRelativeLoad => self.pc_relative_load(opcode, bus),
             ThumbInstruction::HiRegisterOperationsBranchExchange => {
-                self.hi_register_operations_branch_exchange(opcode);
+                self.hi_register_operations_branch_exchange(opcode)
             }
             ThumbInstruction::AluOperations => self.alu_operations(opcode),
             ThumbInstruction::MoveCompareAddSubtractImmediate => {
-                self.move_compare_add_subtract_immediate(opcode);
+                self.move_compare_add_subtract_immediate(opcode)
             }
             ThumbInstruction::AddSubtract => self.add_subtract(opcode),
             ThumbInstruction::MoveShiftedRegister => self.move_shifted_register(opcode),
             ThumbInstruction::Unimplemented => {
-                println!(
-                    "Location: {:#010X}, Callback: {:#010X}",
-                    self.registers.program_counter, self.registers.link_register
-                );
-                unreachable!("Unimplemented Thumb opcode: {opcode:#06X}")
+                Err(CpuError::UnimplementedThumbInstruction { opcode })
             }
         }
     }
 
-    fn thumb_software_interrupt(&mut self) {
+    fn thumb_software_interrupt(&mut self) -> Result<(), CpuError> {
         self.registers.link_register = self.registers.program_counter;
         self.registers
             .status_registers
-            .set_supervisor(self.registers.current());
+            .set_supervisor(self.registers.current())?;
         self.registers.program_counter = SOFTWARE_INTERRUPT_ADDRESS;
         self.registers.set_state(InstructionSet::Arm);
         self.registers.set_mode(CpuMode::Supervisor);
+        Ok(())
     }
 
-    fn unconditional_branch(&mut self, opcode: u16) {
+    fn unconditional_branch(&mut self, opcode: u16) -> Result<(), CpuError> {
         // Offset is a 12 bit value, but is stored as 11 bits (lsb is dropped) because it must be halfword aligned
         const MASK: u16 = 0x07FF;
         let offset = sign_extend(((opcode & MASK) << 1).into(), 12);
         self.registers.program_counter = self
             .registers
-            .get(15)
+            .get(15)?
             .wrapping_add_signed(offset.cast_signed());
+        Ok(())
     }
 
-    fn conditional_branch(&mut self, opcode: u16) {
+    fn conditional_branch(&mut self, opcode: u16) -> Result<(), CpuError> {
         const CONDITIONS_MASK: u16 = 0x0F00;
         const CONDITIONS_SHIFT: usize = 8;
         const SIGNED_OFFSET_MASK: u16 = 0x00FF;
         let conditions = (opcode & CONDITIONS_MASK) >> CONDITIONS_SHIFT;
-        let offset = ((opcode & SIGNED_OFFSET_MASK) as i8) << 1;
-        let branch = self.registers.check_conditions(conditions.truncate());
+        let offset = i8::try_from(opcode & SIGNED_OFFSET_MASK)? << 1;
+        let branch = self.registers.check_conditions(conditions.truncate())?;
         if branch {
             self.registers.program_counter = self
                 .registers
-                .get(15)
+                .get(15)?
                 .wrapping_add_signed(i32::from(offset));
         }
+        Ok(())
     }
 
-    fn multiple_loadstore(&mut self, opcode: u16, bus: &mut Bus) {
+    fn multiple_loadstore(&mut self, opcode: u16, bus: &mut Bus) -> Result<(), CpuError> {
         const LOAD_STORE_MASK: u16 = 0x0800;
         const BASE_REGISTER_MASK: u16 = 0x0700;
         const BASE_REGISTER_SHIFT: usize = 8;
@@ -785,31 +859,43 @@ impl Cpu {
         let base_register = (opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT;
         let register_list = opcode & REGISTER_LIST_MASK;
         if load {
-            self.multiple_load(base_register, register_list, bus);
+            self.multiple_load(base_register, register_list, bus)
         } else {
-            self.multiple_store(base_register, register_list, bus);
+            self.multiple_store(base_register, register_list, bus)
         }
     }
 
-    fn multiple_load(&mut self, base_register: u16, register_list: u16, bus: &Bus) {
-        let mut address = self.registers.get(base_register) as usize;
+    fn multiple_load(
+        &mut self,
+        base_register: u16,
+        register_list: u16,
+        bus: &Bus,
+    ) -> Result<(), CpuError> {
+        let mut address = usize::try_from(self.registers.get(base_register)?)?;
         for register in (0..=7).filter(|r| register_list & (1 << r) > 0) {
-            self.registers.set(register, bus.read_32(address));
+            self.registers.set(register, bus.read_32(address))?;
             address = address.wrapping_add(4);
         }
-        self.registers.set(base_register, address as u32);
+        self.registers.set(base_register, u32::try_from(address)?)?;
+        Ok(())
     }
 
-    fn multiple_store(&mut self, base_register: u16, register_list: u16, bus: &mut Bus) {
-        let mut address = self.registers.get(base_register) as usize;
+    fn multiple_store(
+        &mut self,
+        base_register: u16,
+        register_list: u16,
+        bus: &mut Bus,
+    ) -> Result<(), CpuError> {
+        let mut address = usize::try_from(self.registers.get(base_register)?)?;
         for register in (0..=7).filter(|r| register_list & (1 << r) > 0) {
-            bus.write_32(address, self.registers.get(register));
+            bus.write_32(address, self.registers.get(register)?);
             address = address.wrapping_add(4);
         }
-        self.registers.set(base_register, address as u32);
+        self.registers.set(base_register, u32::try_from(address)?)?;
+        Ok(())
     }
 
-    fn long_branch_with_link(&mut self, opcode: u16) {
+    fn long_branch_with_link(&mut self, opcode: u16) -> Result<(), CpuError> {
         const H_MASK: u16 = 0x0800;
         const OFFSET_MASK: u16 = 0x07FF;
         let h = opcode & H_MASK > 0;
@@ -817,7 +903,7 @@ impl Cpu {
         if !h {
             self.registers.link_register = self
                 .registers
-                .get(15)
+                .get(15)?
                 .wrapping_add(sign_extend((offset << 1).into(), 12) << 11);
         } else {
             let return_address = self.registers.program_counter;
@@ -828,9 +914,10 @@ impl Cpu {
             self.registers.program_counter = self.registers.link_register;
             self.registers.link_register = return_address | 1;
         }
+        Ok(())
     }
 
-    fn add_offset_to_stack_pointer(&mut self, opcode: u16) {
+    fn add_offset_to_stack_pointer(&mut self, opcode: u16) -> Result<(), CpuError> {
         const SIGN_FLAG_MASK: u16 = 0x0080;
         const SIGN_FLAG_SHIFT: usize = 7;
         const SIGNED_OFFSET_MASK: u16 = 0x007F;
@@ -848,9 +935,10 @@ impl Cpu {
                 .stack_pointer
                 .wrapping_add_signed(i32::from(word));
         }
+        Ok(())
     }
 
-    fn push_pop_registers(&mut self, opcode: u16, bus: &mut Bus) {
+    fn push_pop_registers(&mut self, opcode: u16, bus: &mut Bus) -> Result<(), CpuError> {
         const LOAD_STORE_MASK: u16 = 0x0800;
         const LOAD_STORE_SHIFT: usize = 11;
         const PC_LR_MASK: u16 = 0x0100;
@@ -860,43 +948,56 @@ impl Cpu {
         let pc_lr = (opcode & PC_LR_MASK) >> PC_LR_SHIFT > 0;
         let register_list = opcode & REGISTER_LIST_MASK;
         if load {
-            self.pop_registers(register_list, pc_lr, bus);
+            self.pop_registers(register_list, pc_lr, bus)
         } else {
-            self.push_registers(register_list, pc_lr, bus);
+            self.push_registers(register_list, pc_lr, bus)
         }
     }
 
-    fn pop_registers(&mut self, register_list: u16, pc_lr: bool, bus: &Bus) {
+    fn pop_registers(
+        &mut self,
+        register_list: u16,
+        pc_lr: bool,
+        bus: &Bus,
+    ) -> Result<(), CpuError> {
         for register in (0..=7).filter(|r| register_list & (1 << r) > 0) {
-            let val = self.pop(bus);
-            self.registers.set(register, val);
+            let val = self.pop(bus)?;
+            self.registers.set(register, val)?;
         }
         if pc_lr {
-            self.registers.program_counter = self.pop(bus);
+            self.registers.program_counter = self.pop(bus)?;
         }
+        Ok(())
     }
 
-    fn push_registers(&mut self, register_list: u16, pc_lr: bool, bus: &mut Bus) {
+    fn push_registers(
+        &mut self,
+        register_list: u16,
+        pc_lr: bool,
+        bus: &mut Bus,
+    ) -> Result<(), CpuError> {
         if pc_lr {
-            self.push(self.registers.link_register, bus);
+            self.push(self.registers.link_register, bus)?;
         }
         for register in (0..=7).rev().filter(|r| register_list & (1 << r) > 0) {
-            self.push(self.registers.get(register), bus);
+            self.push(self.registers.get(register)?, bus)?;
         }
+        Ok(())
     }
 
-    fn pop(&mut self, bus: &Bus) -> u32 {
-        let value = bus.read_32(self.registers.stack_pointer as usize);
+    fn pop(&mut self, bus: &Bus) -> Result<u32, CpuError> {
+        let value = bus.read_32(usize::try_from(self.registers.stack_pointer)?);
         self.registers.stack_pointer = self.registers.stack_pointer.wrapping_add(4);
-        value
+        Ok(value)
     }
 
-    fn push(&mut self, value: u32, bus: &mut Bus) {
+    fn push(&mut self, value: u32, bus: &mut Bus) -> Result<(), CpuError> {
         self.registers.stack_pointer = self.registers.stack_pointer.wrapping_sub(4);
-        bus.write_32(self.registers.stack_pointer as usize, value);
+        bus.write_32(usize::try_from(self.registers.stack_pointer)?, value);
+        Ok(())
     }
 
-    fn load_store_halfword(&mut self, opcode: u16, bus: &mut Bus) {
+    fn load_store_halfword(&mut self, opcode: u16, bus: &mut Bus) -> Result<(), CpuError> {
         const LOAD_STORE_MASK: u16 = 0x0800;
         const LOAD_STORE_SHIFT: usize = 11;
         // 6 bit immediate offset stored as 5 bits
@@ -909,22 +1010,24 @@ impl Cpu {
         let offset = (opcode & OFFSET_IMMEDIATE_MASK) >> OFFSET_IMMEDIATE_SHIFT;
         let base_register = (opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT;
         let source_destination_register = opcode & SOURCE_DESTINATION_REGISTER_MASK;
-        let address = self
-            .registers
-            .get(base_register)
-            .wrapping_add(u32::from(offset)) as usize;
+        let address = usize::try_from(
+            self.registers
+                .get(base_register)?
+                .wrapping_add(u32::from(offset)),
+        )?;
         if load {
             self.registers
-                .set(source_destination_register, u32::from(bus.read_16(address)));
+                .set(source_destination_register, u32::from(bus.read_16(address)))?;
         } else {
             bus.write_16(
                 address,
-                self.registers.get(source_destination_register).truncate(),
+                self.registers.get(source_destination_register)?.truncate(),
             );
         }
+        Ok(())
     }
 
-    fn sp_relative_load_store(&mut self, opcode: u16, bus: &mut Bus) {
+    fn sp_relative_load_store(&mut self, opcode: u16, bus: &mut Bus) -> Result<(), CpuError> {
         const LOAD_STORE_MASK: u16 = 0x0800;
         const LOAD_STORE_SHIFT: usize = 11;
         const DESTINATION_REGISTER_MASK: u16 = 0x0700;
@@ -937,17 +1040,20 @@ impl Cpu {
         if load {
             self.registers.set(
                 destination_register,
-                bus.read_32(self.registers.stack_pointer.wrapping_add(offset) as usize),
-            );
+                bus.read_32(usize::try_from(
+                    self.registers.stack_pointer.wrapping_add(offset),
+                )?),
+            )?;
         } else {
             bus.write_32(
-                self.registers.stack_pointer.wrapping_add(offset) as usize,
-                self.registers.get(destination_register),
+                usize::try_from(self.registers.stack_pointer.wrapping_add(offset))?,
+                self.registers.get(destination_register)?,
             );
         }
+        Ok(())
     }
 
-    fn load_address(&mut self, opcode: u16) {
+    fn load_address(&mut self, opcode: u16) -> Result<(), CpuError> {
         const SOURCE_MASK: u16 = 0x0800;
         const SOURCE_SHIFT: usize = 11;
         const DESTINATION_REGISTER_MASK: u16 = 0x0700;
@@ -961,12 +1067,17 @@ impl Cpu {
         let address = if source {
             self.registers.stack_pointer.wrapping_add(word)
         } else {
-            self.registers.get(15).wrapping_add(word) & !3
+            self.registers.get(15)?.wrapping_add(word) & !3
         };
-        self.registers.set(destination_register, address);
+        self.registers.set(destination_register, address)?;
+        Ok(())
     }
 
-    fn load_store_with_immediate_offset(&mut self, opcode: u16, bus: &mut Bus) {
+    fn load_store_with_immediate_offset(
+        &mut self,
+        opcode: u16,
+        bus: &mut Bus,
+    ) -> Result<(), CpuError> {
         const BYTE_WORD_MASK: u16 = 0x1000;
         const BYTE_WORD_SHIFT: usize = 12;
         const LOAD_STORE_MASK: u16 = 0x0800;
@@ -981,36 +1092,43 @@ impl Cpu {
         let offset = (opcode & OFFSET_IMMEDIATE_MASK) >> OFFSET_IMMEDIATE_SHIFT;
         let base_register = (opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT;
         let source_destination_register = opcode & SOURCE_DESTINATION_REGISTER_MASK;
-        let byte_address = self
-            .registers
-            .get(base_register)
-            .wrapping_add(u32::from(offset)) as usize;
-        let word_address = self
-            .registers
-            .get(base_register)
-            .wrapping_add(u32::from(offset << 2)) as usize;
+        let byte_address = usize::try_from(
+            self.registers
+                .get(base_register)?
+                .wrapping_add(u32::from(offset)),
+        )?;
+        let word_address = usize::try_from(
+            self.registers
+                .get(base_register)?
+                .wrapping_add(u32::from(offset << 2)),
+        )?;
         match (load, byte) {
             (true, true) => self.registers.set(
                 source_destination_register,
                 u32::from(bus.read_8(byte_address)),
-            ),
+            )?,
             (true, false) => self
                 .registers
-                .set(source_destination_register, bus.read_32(word_address)),
+                .set(source_destination_register, bus.read_32(word_address))?,
             (false, true) => bus.write_8(
                 byte_address,
-                self.registers.get(source_destination_register).truncate(),
+                self.registers.get(source_destination_register)?.truncate(),
             ),
             (false, false) => {
                 bus.write_32(
                     word_address,
-                    self.registers.get(source_destination_register),
+                    self.registers.get(source_destination_register)?,
                 );
             }
         }
+        Ok(())
     }
 
-    fn load_store_with_register_offset(&mut self, opcode: u16, bus: &mut Bus) {
+    fn load_store_with_register_offset(
+        &mut self,
+        opcode: u16,
+        bus: &mut Bus,
+    ) -> Result<(), CpuError> {
         const LOAD_STORE_MASK: u16 = 0x0800;
         const LOAD_STORE_SHIFT: usize = 11;
         const BYTE_WORD_MASK: u16 = 0x0400;
@@ -1025,28 +1143,34 @@ impl Cpu {
         let offset_register = (opcode & OFFSET_REGISTER_MASK) >> OFFSET_REGISTER_SHIFT;
         let base_register = (opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT;
         let source_destination_register = opcode & SOURCE_DESTINATION_REGISTER_MASK;
-        let address = self
-            .registers
-            .get(base_register)
-            .wrapping_add(self.registers.get(offset_register)) as usize;
+        let address = usize::try_from(
+            self.registers
+                .get(base_register)?
+                .wrapping_add(self.registers.get(offset_register)?),
+        )?;
         match (load, byte) {
             (true, true) => self
                 .registers
-                .set(source_destination_register, u32::from(bus.read_8(address))),
+                .set(source_destination_register, u32::from(bus.read_8(address)))?,
             (true, false) => self
                 .registers
-                .set(source_destination_register, bus.read_32(address)),
+                .set(source_destination_register, bus.read_32(address))?,
             (false, true) => bus.write_8(
                 address,
-                self.registers.get(source_destination_register).truncate(),
+                self.registers.get(source_destination_register)?.truncate(),
             ),
             (false, false) => {
-                bus.write_32(address, self.registers.get(source_destination_register))
+                bus.write_32(address, self.registers.get(source_destination_register)?);
             }
         }
+        Ok(())
     }
 
-    fn load_store_sign_extended_byte_halfword(&mut self, opcode: u16, bus: &mut Bus) {
+    fn load_store_sign_extended_byte_halfword(
+        &mut self,
+        opcode: u16,
+        bus: &mut Bus,
+    ) -> Result<(), CpuError> {
         const H_FLAG_MASK: u16 = 0x0800;
         const H_FLAG_SHIFT: usize = 11;
         const SIGN_EXTEND_FLAG_MASK: u16 = 0x0400;
@@ -1061,31 +1185,33 @@ impl Cpu {
         let offset_register = (opcode & OFFSET_REGISTER_MASK) >> OFFSET_REGISTER_SHIFT;
         let base_register = (opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT;
         let source_destination_register = opcode & SOURCE_DESTINATION_REGISTER_MASK;
-        let address = self
-            .registers
-            .get(base_register)
-            .wrapping_add(self.registers.get(offset_register)) as usize;
+        let address = usize::try_from(
+            self.registers
+                .get(base_register)?
+                .wrapping_add(self.registers.get(offset_register)?),
+        )?;
         match (sign_extend_flag, h_flag) {
             (false, false) => bus.write_16(
                 address,
-                self.registers.get(source_destination_register).truncate(),
+                self.registers.get(source_destination_register)?.truncate(),
             ),
             (false, true) => {
                 self.registers
-                    .set(source_destination_register, u32::from(bus.read_16(address)));
+                    .set(source_destination_register, u32::from(bus.read_16(address)))?;
             }
             (true, false) => self.registers.set(
                 source_destination_register,
                 sign_extend(bus.read_8(address).into(), 8),
-            ),
+            )?,
             (true, true) => self.registers.set(
                 source_destination_register,
                 sign_extend(bus.read_16(address).into(), 16),
-            ),
+            )?,
         }
+        Ok(())
     }
 
-    fn pc_relative_load(&mut self, opcode: u16, bus: &Bus) {
+    fn pc_relative_load(&mut self, opcode: u16, bus: &Bus) -> Result<(), CpuError> {
         const DESTINATION_REGISTER_MASK: u16 = 0x0700;
         const DESTINATION_REGISTER_SHIFT: usize = 8;
         const OFFSET_MASK: u16 = 0x00FF;
@@ -1095,12 +1221,14 @@ impl Cpu {
         let offset = (opcode & OFFSET_MASK) << OFFSET_SHIFT; // offset is 10 bit word aligned, so
         // it is stored as 8 bits
         // we have to clear lowest bit of program counter
-        let value =
-            bus.read_32((self.registers.get(15) & !3).wrapping_add(u32::from(offset)) as usize);
-        self.registers.set(destination_register, value);
+        let value = bus.read_32(usize::try_from(
+            (self.registers.get(15)? & !3).wrapping_add(u32::from(offset)),
+        )?);
+        self.registers.set(destination_register, value)?;
+        Ok(())
     }
 
-    fn hi_register_operations_branch_exchange(&mut self, opcode: u16) {
+    fn hi_register_operations_branch_exchange(&mut self, opcode: u16) -> Result<(), CpuError> {
         const OPCODE_MASK: u16 = 0x0300;
         const OPCODE_SHIFT: usize = 8;
         const H1_MASK: u16 = 1 << 7;
@@ -1118,7 +1246,9 @@ impl Cpu {
             0b01 => self.hi_register_cmp(hi1, hi2, source_register, destination_register),
             0b10 => self.hi_register_mov(hi1, hi2, source_register, destination_register),
             0b11 => self.hi_register_bx(hi2, source_register),
-            _ => unreachable!(),
+            _ => {
+                Err(CpuError::UnreachableHiRegisterOperationsBranchExchangeSubOpcode { sub_opcode })
+            }
         }
     }
 
@@ -1128,14 +1258,15 @@ impl Cpu {
         h2: bool,
         source_register: u16,
         destination_register: u16,
-    ) {
+    ) -> Result<(), CpuError> {
         let dest = (u16::from(h1) << 3) | destination_register;
         let src = (u16::from(h2) << 3) | source_register;
         let value = self
             .registers
-            .get(dest)
-            .wrapping_add(self.registers.get(src));
-        self.registers.set(dest, value);
+            .get(dest)?
+            .wrapping_add(self.registers.get(src)?);
+        self.registers.set(dest, value)?;
+        Ok(())
     }
 
     fn hi_register_cmp(
@@ -1144,11 +1275,12 @@ impl Cpu {
         h2: bool,
         source_register: u16,
         destination_register: u16,
-    ) {
+    ) -> Result<(), CpuError> {
         let dest = (u16::from(h1) << 3) | destination_register;
         let src = (u16::from(h2) << 3) | source_register;
-        let result = alu::subtract(self.registers.get(dest), self.registers.get(src));
+        let result = alu::subtract(self.registers.get(dest)?, self.registers.get(src)?);
         self.registers.status_registers.set_conditions(result);
+        Ok(())
     }
 
     fn hi_register_mov(
@@ -1157,24 +1289,26 @@ impl Cpu {
         h2: bool,
         source_register: u16,
         destination_register: u16,
-    ) {
+    ) -> Result<(), CpuError> {
         let dest = (u16::from(h1) << 3) | destination_register;
         let src = (u16::from(h2) << 3) | source_register;
-        self.registers.set(dest, self.registers.get(src));
+        self.registers.set(dest, self.registers.get(src)?)?;
+        Ok(())
     }
 
-    fn hi_register_bx(&mut self, h: bool, register: u16) {
+    fn hi_register_bx(&mut self, h: bool, register: u16) -> Result<(), CpuError> {
         let r = (u16::from(h) << 3) | register;
-        let mode = if self.registers.get(r) & 0x01 > 0 {
+        let mode = if self.registers.get(r)? & 0x01 > 0 {
             InstructionSet::Thumb
         } else {
             InstructionSet::Arm
         };
         self.registers.set_state(mode);
-        self.registers.program_counter = self.registers.get(r) & !1;
+        self.registers.program_counter = self.registers.get(r)? & !1;
+        Ok(())
     }
 
-    fn alu_operations(&mut self, opcode: u16) {
+    fn alu_operations(&mut self, opcode: u16) -> Result<(), CpuError> {
         const OPCODE_MASK: u16 = 0x03C0;
         const OPCODE_SHIFT: usize = 6;
         const SOURCE_REGISTER_MASK: u16 = 0x0038;
@@ -1185,78 +1319,80 @@ impl Cpu {
         let destination_register = opcode & DESTINATION_REGISTER_MASK;
         let alu_result = match sub_opcode {
             0x00 => alu::and(
-                self.registers.get(destination_register),
-                self.registers.get(source_register),
+                self.registers.get(destination_register)?,
+                self.registers.get(source_register)?,
             ),
             0x01 => alu::xor(
-                self.registers.get(destination_register),
-                self.registers.get(source_register),
+                self.registers.get(destination_register)?,
+                self.registers.get(source_register)?,
             ),
             0x02 => alu::shift_left(
-                self.registers.get(destination_register),
-                self.registers.get(source_register),
+                self.registers.get(destination_register)?,
+                self.registers.get(source_register)?,
             ),
             0x03 => alu::shift_right(
-                self.registers.get(destination_register),
-                self.registers.get(source_register),
+                self.registers.get(destination_register)?,
+                self.registers.get(source_register)?,
             ),
             0x04 => alu::arithmetic_shift_right(
-                self.registers.get(destination_register),
-                self.registers.get(source_register),
+                self.registers.get(destination_register)?,
+                self.registers.get(source_register)?,
             ),
             0x05 => alu::add_carry(
-                self.registers.get(source_register),
-                self.registers.get(destination_register),
+                self.registers.get(source_register)?,
+                self.registers.get(destination_register)?,
                 self.registers.carry().into(),
             ),
             0x06 => alu::sub_carry(
-                self.registers.get(source_register),
-                self.registers.get(destination_register),
+                self.registers.get(source_register)?,
+                self.registers.get(destination_register)?,
                 self.registers.carry().into(),
             ),
             0x07 => alu::rotate_right(
-                self.registers.get(destination_register),
-                self.registers.get(source_register),
+                self.registers.get(destination_register)?,
+                self.registers.get(source_register)?,
             ),
             0x08 => alu::and(
-                self.registers.get(destination_register),
-                self.registers.get(source_register),
+                self.registers.get(destination_register)?,
+                self.registers.get(source_register)?,
             ),
-            0x09 => alu::subtract(0, self.registers.get(source_register)),
+            0x09 => alu::subtract(0, self.registers.get(source_register)?),
             0x0A => alu::subtract(
-                self.registers.get(destination_register),
-                self.registers.get(source_register),
+                self.registers.get(destination_register)?,
+                self.registers.get(source_register)?,
             ),
             0x0B => alu::add(
-                self.registers.get(destination_register),
-                self.registers.get(source_register),
+                self.registers.get(destination_register)?,
+                self.registers.get(source_register)?,
             ),
             0x0C => alu::or(
-                self.registers.get(destination_register),
-                self.registers.get(source_register),
+                self.registers.get(destination_register)?,
+                self.registers.get(source_register)?,
             ),
             0x0D => AluResult {
                 result: self
                     .registers
-                    .get(destination_register)
-                    .wrapping_mul(self.registers.get(source_register)),
+                    .get(destination_register)?
+                    .wrapping_mul(self.registers.get(source_register)?),
                 carry: None,
                 overflow: None,
             },
             0x0E => alu::and(
-                self.registers.get(destination_register),
-                !self.registers.get(source_register),
+                self.registers.get(destination_register)?,
+                !self.registers.get(source_register)?,
             ),
-            0x0F => alu::nop(!self.registers.get(source_register)),
-            _ => unreachable!(),
+            0x0F => alu::nop(!self.registers.get(source_register)?),
+            _ => return Err(CpuError::UnreachableAluOperationsSubOpcode { sub_opcode }),
         };
         self.registers.status_registers.set_conditions(alu_result);
         if !matches!(sub_opcode, 0x08 | 0x0A | 0x0B) {
-            self.registers.set(destination_register, alu_result.result);
+            self.registers
+                .set(destination_register, alu_result.result)?;
         }
+        Ok(())
     }
 
-    fn move_compare_add_subtract_immediate(&mut self, opcode: u16) {
+    fn move_compare_add_subtract_immediate(&mut self, opcode: u16) -> Result<(), CpuError> {
         const OPCODE_MASK: u16 = 0x1800;
         const OPCODE_SHIFT: usize = 11;
         const DESTINATION_REGISTER_MASK: u16 = 0x0700;
@@ -1269,27 +1405,31 @@ impl Cpu {
         let result = match sub_opcode {
             0b00 => alu::nop(u32::from(immediate_value)),
             0b01 => alu::subtract(
-                self.registers.get(destination_register),
+                self.registers.get(destination_register)?,
                 u32::from(immediate_value),
             ),
             0b10 => alu::add(
-                self.registers.get(destination_register),
+                self.registers.get(destination_register)?,
                 u32::from(immediate_value),
             ),
             0b11 => alu::subtract(
-                self.registers.get(destination_register),
+                self.registers.get(destination_register)?,
                 u32::from(immediate_value),
             ),
-            _ => unreachable!(),
+            _ => {
+                return Err(
+                    CpuError::UnreachableMoveCompareAddSubtractImmediateSubOpcode { sub_opcode },
+                );
+            }
         };
         self.registers.status_registers.set_conditions(result);
-        if sub_opcode == 0b01 {
-            return;
+        if sub_opcode != 0b01 {
+            self.registers.set(destination_register, result.result)?;
         }
-        self.registers.set(destination_register, result.result);
+        Ok(())
     }
 
-    fn add_subtract(&mut self, opcode: u16) {
+    fn add_subtract(&mut self, opcode: u16) -> Result<(), CpuError> {
         const I_MASK: u16 = 0x0400;
         const I_SHIFT: usize = 10;
         const OPCODE_MASK: u16 = 0x0200;
@@ -1308,24 +1448,29 @@ impl Cpu {
         let source_register = (opcode & SOURCE_REGISTER_MASK) >> SOURCE_REGISTER_SHIFT;
         let destination_register = opcode & DESTINATION_REGISTER_MASK;
         let result = match (sub_opcode, i) {
-            (false, false) => alu::add(self.registers.get(source_register), self.registers.get(r3)),
+            (false, false) => alu::add(
+                self.registers.get(source_register)?,
+                self.registers.get(r3)?,
+            ),
             (false, true) => alu::add(
-                self.registers.get(source_register),
+                self.registers.get(source_register)?,
                 u32::from(immediate_value),
             ),
-            (true, false) => {
-                alu::subtract(self.registers.get(source_register), self.registers.get(r3))
-            }
+            (true, false) => alu::subtract(
+                self.registers.get(source_register)?,
+                self.registers.get(r3)?,
+            ),
             (true, true) => alu::subtract(
-                self.registers.get(source_register),
+                self.registers.get(source_register)?,
                 u32::from(immediate_value),
             ),
         };
         self.registers.status_registers.set_conditions(result);
-        self.registers.set(destination_register, result.result);
+        self.registers.set(destination_register, result.result)?;
+        Ok(())
     }
 
-    fn move_shifted_register(&mut self, opcode: u16) {
+    fn move_shifted_register(&mut self, opcode: u16) -> Result<(), CpuError> {
         const OPCODE_MASK: u16 = 0x1800;
         const OPCODE_SHIFT: usize = 11;
         const IMMEDIATE_VALUE_MASK: u16 = 0x07C0;
@@ -1342,16 +1487,17 @@ impl Cpu {
         //immediate_value = 32;
         //}
         let result = match sub_opcode {
-            0b00 => alu::shift_left(self.registers.get(source_register), immediate_value.into()),
-            0b01 => alu::shift_right(self.registers.get(source_register), immediate_value.into()),
+            0b00 => alu::shift_left(self.registers.get(source_register)?, immediate_value.into()),
+            0b01 => alu::shift_right(self.registers.get(source_register)?, immediate_value.into()),
             0b10 => alu::arithmetic_shift_right(
-                self.registers.get(source_register),
+                self.registers.get(source_register)?,
                 immediate_value.into(),
             ),
-            _ => unreachable!(),
+            _ => return Err(CpuError::UnreachableMoveShiftedRegisterSubOpcode { sub_opcode }),
         };
         self.registers.status_registers.set_conditions(result);
-        self.registers.set(destination_register, result.result);
+        self.registers.set(destination_register, result.result)?;
+        Ok(())
     }
 }
 
