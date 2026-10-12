@@ -116,6 +116,15 @@ impl Cpu {
         }
     }
 
+    // This doesn't really work
+    // It can't handle branches or mode changes, but it gets me what I need for now
+    pub fn back(&mut self) {
+        match self.registers.state() {
+            InstructionSet::Arm => self.registers.program_counter -= 4,
+            InstructionSet::Thumb => self.registers.program_counter -= 2,
+        }
+    }
+
     pub fn cpu_cycle(&mut self, bus: &mut Bus) {
         match self.registers.state() {
             InstructionSet::Arm => self.arm_cycle(bus),

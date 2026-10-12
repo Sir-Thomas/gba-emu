@@ -24,6 +24,10 @@ impl Gba {
         }
     }
 
+    pub fn back(&mut self) {
+        self.cpu.back();
+    }
+
     pub fn cpu_cycle(&mut self) {
         self.cpu.cpu_cycle(&mut self.bus);
     }
