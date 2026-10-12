@@ -61,6 +61,7 @@
               cargo-edit
               cargo-watch
               rust-analyzer
+              tokei
               self.formatter.${system}
               wayland
               libxkbcommon
