@@ -46,6 +46,8 @@ pub enum CpuError {
     UnreachableMoveCompareAddSubtractImmediateSubOpcode { sub_opcode: u16 },
     #[error("Unreachable Move Shifted Register Sub Opcode {sub_opcode:#06X}")]
     UnreachableMoveShiftedRegisterSubOpcode { sub_opcode: u16 },
+    #[error("Attempted to Multiply Long with Program Counter")]
+    MultiplyLongWithProgramCounter,
     #[error(
         "Error executing instruction
         Program Counter: {program_counter:#010X}
@@ -411,19 +413,24 @@ impl Cpu {
             self.registers.get(register.truncate())?
         };
         if !mode_included {
-            value = (value & !0b11111) | (self.registers.current() & 0b11111);
+            let old = if saved {
+                self.registers.status_registers.get_saved()?
+            } else {
+                self.registers.current()
+            };
+            value = (value & !0b11111) | (old & 0b11111);
         }
-        if !saved {
+        if saved {
+            self.registers.status_registers.save(value)?;
+        } else {
             self.registers.status_registers.set_current(value)?;
-            return Ok(());
         }
-        self.registers.status_registers.save(value)?;
         Ok(())
     }
 
     fn multiply(&mut self, opcode: u32) -> Result<(), CpuError> {
-        const ACCUMULATE: u32 = 1 << 21;
-        const SET_CONDITION_CODE: u32 = 1 << 20;
+        const ACCUMULATE_BIT: u32 = 1 << 21;
+        const SET_CONDITIONS_BIT: u32 = 1 << 20;
         const DESTINATION_REGISTER_MASK: u32 = 0x000F_0000;
         const DESTINATION_REGISTER_SHIFT: usize = 16;
         const SOURCE_REGISTER_N_MASK: u32 = 0x0000_F000;
@@ -431,8 +438,8 @@ impl Cpu {
         const SOURCE_REGISTER_S_MASK: u32 = 0x0000_0F00;
         const SOURCE_REGISTER_S_SHIFT: usize = 8;
         const SOURCE_REGISTER_M_MASK: u32 = 0x0000_000F;
-        let accumulate = opcode & ACCUMULATE > 0;
-        let set_condition_code = opcode & SET_CONDITION_CODE > 0;
+        let accumulate = opcode & ACCUMULATE_BIT > 0;
+        let set_condition_code = opcode & SET_CONDITIONS_BIT > 0;
         let destination_register =
             (opcode & DESTINATION_REGISTER_MASK) >> DESTINATION_REGISTER_SHIFT;
         let source_register_n =
@@ -452,14 +459,75 @@ impl Cpu {
         };
         self.registers.set(destination_register.truncate(), value)?;
         if set_condition_code {
-            self.registers.set_zero(value == 0);
-            self.registers.set_negative(value & 0x8000_0000 > 0);
+            self.registers.status_registers.set_conditions(AluResult {
+                result: value,
+                carry: None,
+                overflow: None,
+            });
         }
         Ok(())
     }
 
-    fn multiply_long(&self, opcode: u32) -> Result<(), CpuError> {
-        todo!("MultiplyLong {opcode:#010X}");
+    fn multiply_long(&mut self, opcode: u32) -> Result<(), CpuError> {
+        const SIGNED_BIT: u32 = 1 << 22;
+        const ACCUMULATE_BIT: u32 = 1 << 21;
+        const SET_CONDITIONS_BIT: u32 = 1 << 20;
+        const DESTINATION_REGISTER_HI_MASK: u32 = 0x000F_0000;
+        const DESTINATION_REGISTER_HI_SHIFT: usize = 16;
+        const DESTINATION_REGISTER_LOW_MASK: u32 = 0x0000_F000;
+        const DESTINATION_REGISTER_LOW_SHIFT: usize = 12;
+        const SOURCE_REGISTER_S_MASK: u32 = 0x0000_0F00;
+        const SOURCE_REGISTER_S_SHIFT: usize = 8;
+        const SOURCE_REGISTER_M_MASK: u32 = 0x0000_000F;
+        let signed = opcode & SIGNED_BIT > 0;
+        let accumulate = opcode & ACCUMULATE_BIT > 0;
+        let set_condition_code = opcode & SET_CONDITIONS_BIT > 0;
+        let destination_register_hi =
+            ((opcode & DESTINATION_REGISTER_HI_MASK) >> DESTINATION_REGISTER_HI_SHIFT).truncate();
+        let destination_register_low =
+            ((opcode & DESTINATION_REGISTER_LOW_MASK) >> DESTINATION_REGISTER_LOW_SHIFT).truncate();
+        let source_register_s =
+            ((opcode & SOURCE_REGISTER_S_MASK) >> SOURCE_REGISTER_S_SHIFT).truncate();
+        let source_register_m = (opcode & SOURCE_REGISTER_M_MASK).truncate();
+        if matches!(
+            destination_register_hi
+                | destination_register_low
+                | source_register_s
+                | source_register_m,
+            15
+        ) {
+            return Err(CpuError::MultiplyLongWithProgramCounter);
+        }
+        let mut result = if accumulate {
+            (u64::from(self.registers.get(destination_register_hi)?) << 32)
+                .wrapping_add(u64::from(self.registers.get(destination_register_low)?))
+        } else {
+            0
+        };
+        result = if signed {
+            result
+                .cast_signed()
+                .wrapping_add(
+                    i64::from(self.registers.get(source_register_m)?.cast_signed()).wrapping_mul(
+                        i64::from(self.registers.get(source_register_s)?.cast_signed()),
+                    ),
+                )
+                .cast_unsigned()
+        } else {
+            result.wrapping_add(
+                u64::from(self.registers.get(source_register_m)?)
+                    .wrapping_mul(u64::from(self.registers.get(source_register_s)?)),
+            )
+        };
+        let hi32 = (result >> 32).truncate();
+        let low32 = result.truncate();
+        self.registers.set(destination_register_hi, hi32)?;
+        self.registers.set(destination_register_low, low32)?;
+        if set_condition_code {
+            self.registers.set_zero(result == 0);
+            self.registers.set_negative(result.cast_signed() < 0);
+        }
+        Ok(())
     }
 
     fn single_data_swap(&self, opcode: u32) -> Result<(), CpuError> {
