@@ -214,6 +214,7 @@ impl eframe::App for GbaApp {
                 self.gba.overflow()
             ));
             ui.add(Image::new(&self.display_texture).fit_to_original_size(self.scale));
+            ui.request_repaint();
         });
     }
 }
