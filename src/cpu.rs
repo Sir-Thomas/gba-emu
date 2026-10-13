@@ -22,7 +22,7 @@ const SOFTWARE_INTERRUPT_ADDRESS: u32 = 0x0000_0008;
 
 #[derive(Error, Debug)]
 pub enum CpuError {
-    #[error("Could not convert u32 to usize")]
+    #[error("Error converting integers")]
     UsizeError(#[from] TryFromIntError),
     #[error("Register Error: {0}")]
     Register(#[from] RegisterError),
