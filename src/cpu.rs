@@ -210,7 +210,7 @@ impl Cpu {
             ArmInstruction::PsrTransferMSR => self.psr_transfer_msr(opcode),
             ArmInstruction::Multiply => self.multiply(opcode),
             ArmInstruction::MultiplyLong => self.multiply_long(opcode),
-            ArmInstruction::SingleDataSwap => self.single_data_swap(opcode),
+            ArmInstruction::SingleDataSwap => self.single_data_swap(opcode, bus),
             ArmInstruction::BranchAndExchange => self.branch_and_exchange(opcode),
             ArmInstruction::HalfwordDataTransferRegisterOffset => {
                 self.halfword_data_transfer_register_offset(opcode, bus)
@@ -530,8 +530,37 @@ impl Cpu {
         Ok(())
     }
 
-    fn single_data_swap(&self, opcode: u32) -> Result<(), CpuError> {
-        todo!("SingleDataSwap {opcode:#010X}");
+    fn single_data_swap(&mut self, opcode: u32, bus: &mut Bus) -> Result<(), CpuError> {
+        const BYTE_WORD_BIT: u32 = 1 << 22;
+        const BASE_REGISTER_MASK: u32 = 0x000F_0000;
+        const BASE_REGISTER_SHIFT: usize = 16;
+        const DESTINATION_REGISTER_MASK: u32 = 0x0000_F000;
+        const DESTINATION_REGISTER_SHIFT: usize = 12;
+        const SOURCE_REGISTER_MASK: u32 = 0x0000_000F;
+        let byte = opcode & BYTE_WORD_BIT > 0;
+        let base_register = ((opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT).truncate();
+        let destination_register =
+            ((opcode & DESTINATION_REGISTER_MASK) >> DESTINATION_REGISTER_SHIFT).truncate();
+        let source_register = (opcode & SOURCE_REGISTER_MASK).truncate();
+        let address = self.registers.get(base_register)?;
+        let temp = self.registers.get(source_register)?;
+        self.data_transfer(byte, true, destination_register, bus, address)?;
+        self.data_write(byte, temp, bus, address)?;
+        Ok(())
+    }
+
+    fn data_write(
+        &mut self,
+        byte: bool,
+        value: u32,
+        bus: &mut Bus,
+        address: u32,
+    ) -> Result<(), CpuError> {
+        match byte {
+            true => bus.write_8(usize::try_from(address)?, value.truncate()),
+            false => bus.write_32(usize::try_from(address & !3)?, value),
+        }
+        Ok(())
     }
 
     fn branch_and_exchange(&mut self, opcode: u32) -> Result<(), CpuError> {
@@ -732,6 +761,21 @@ impl Cpu {
         if load {
             self.apply_write_back(write_back, pre_index, up, base_register, address, offset)?;
         }
+        self.data_transfer(byte, load, source_destination_register, bus, address)?;
+        if !load {
+            self.apply_write_back(write_back, pre_index, up, base_register, address, offset)?;
+        }
+        Ok(())
+    }
+
+    fn data_transfer(
+        &mut self,
+        byte: bool,
+        load: bool,
+        source_destination_register: u16,
+        bus: &mut Bus,
+        address: u32,
+    ) -> Result<(), CpuError> {
         match (byte, load) {
             (true, true) => self.registers.set(
                 source_destination_register,
@@ -752,9 +796,6 @@ impl Cpu {
                 usize::try_from(address & !3)?,
                 self.registers.get_store(source_destination_register)?,
             ),
-        }
-        if !load {
-            self.apply_write_back(write_back, pre_index, up, base_register, address, offset)?;
         }
         Ok(())
     }
