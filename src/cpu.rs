@@ -1523,13 +1523,13 @@ impl Cpu {
                 self.registers.get(source_register)?,
             ),
             0x05 => alu::add_carry(
-                self.registers.get(source_register)?,
                 self.registers.get(destination_register)?,
+                self.registers.get(source_register)?,
                 self.registers.carry().into(),
             ),
             0x06 => alu::sub_carry(
-                self.registers.get(source_register)?,
                 self.registers.get(destination_register)?,
+                self.registers.get(source_register)?,
                 self.registers.carry().into(),
             ),
             0x07 => alu::rotate_right(
