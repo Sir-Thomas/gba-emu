@@ -834,30 +834,71 @@ impl Cpu {
         let pre_index = opcode & PRE_POST_INDEXING_BIT > 0;
         let up = opcode & UP_DOWN_BIT > 0;
         let psr = opcode & PSR_FORCE_USER_BIT > 0;
-        if psr {
-            todo!("ARM: Block Data Transfer - PSR & force user bit set");
-        }
         let write_back = opcode & WRITE_BACK_BIT > 0;
         let load = opcode & LOAD_STORE_BIT > 0;
         let base_register = ((opcode & BASE_REGISTER_MASK) >> BASE_REGISTER_SHIFT).truncate();
-        let register_list = opcode & REGISTER_LIST_MASK;
+        let mut register_list = opcode & REGISTER_LIST_MASK;
         let base_value = self.registers.get(base_register)?;
-        let byte_count = register_list.count_ones().wrapping_mul(4);
+        let mut byte_count = register_list.count_ones().wrapping_mul(4);
+        let base_in_list = register_list & (1 << base_register) > 0;
+        let current_mode = self.registers.mode();
+        match (psr, load, register_list & (1 << 15) > 0) {
+            (true, true, true) => self.registers.status_registers.load()?,
+            (true, _, _) => self.registers.set_mode(CpuMode::User),
+            _ => {}
+        }
+        // Special Hardware Edge Case
+        if register_list == 0 {
+            register_list = 1 << 15;
+            byte_count = 16 * 4;
+        }
         let mut address = match (up, pre_index) {
             (true, true) => base_value.wrapping_add(4),
             (true, false) => base_value,
             (false, true) => base_value.wrapping_sub(byte_count),
             (false, false) => base_value.wrapping_sub(byte_count).wrapping_add(4),
         };
+        if load {
+            self.write_back(write_back, up, base_value, byte_count, base_register)?;
+        }
+        let mut lowest = true;
         for register in (0..=15).filter(|r| register_list & (1 << r) > 0) {
             if load {
                 self.registers
                     .set(register, bus.read_32(usize::try_from(address)?))?;
             } else {
-                bus.write_32(usize::try_from(address)?, self.registers.get(register)?);
+                // PC is +8 instead of +4 due to pipelining
+                let value = if register == 15 {
+                    self.registers.program_counter.wrapping_add(8)
+                } else if register == base_register && write_back && base_in_list && !lowest {
+                    if up {
+                        base_value.wrapping_add(byte_count)
+                    } else {
+                        base_value.wrapping_sub(byte_count)
+                    }
+                } else {
+                    lowest = false;
+                    self.registers.get(register)?
+                };
+                bus.write_32(usize::try_from(address)?, value);
             }
             address = address.wrapping_add(4);
         }
+        if !load {
+            self.write_back(write_back, up, base_value, byte_count, base_register)?;
+        }
+        self.registers.set_mode(current_mode);
+        Ok(())
+    }
+
+    fn write_back(
+        &mut self,
+        write_back: bool,
+        up: bool,
+        base_value: u32,
+        byte_count: u32,
+        base_register: u16,
+    ) -> Result<(), CpuError> {
         if write_back {
             let final_address = if up {
                 base_value.wrapping_add(byte_count)
