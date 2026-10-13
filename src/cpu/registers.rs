@@ -282,6 +282,14 @@ impl Registers {
         }
     }
 
+    pub fn get_store(&self, register: u16) -> Result<u32, RegisterError> {
+        if register == 15 {
+            Ok(self.program_counter.wrapping_add(8))
+        } else {
+            self.get(register)
+        }
+    }
+
     pub fn set(&mut self, register: u16, value: u32) -> Result<(), RegisterError> {
         match register {
             0..=7 => {

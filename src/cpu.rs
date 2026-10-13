@@ -583,43 +583,19 @@ impl Cpu {
             (true, false) => self.registers.get(base_register)?.wrapping_sub(offset),
             (false, _) => self.registers.get(base_register)?,
         };
-        match (write_back, pre_index, up) {
-            // docs say post-index always writes back
-            (false, true, _) => {}
-            (_, false, false) => self
-                .registers
-                .set(base_register, address.wrapping_sub(offset))?,
-            (_, false, true) => self
-                .registers
-                .set(base_register, address.wrapping_add(offset))?,
-            (true, true, _) => self.registers.set(base_register, address)?,
+        if load {
+            self.apply_write_back(write_back, pre_index, up, base_register, address, offset)?;
         }
-        match (halfword, load, signed) {
-            (true, true, true) => self.registers.set(
-                source_destination_register,
-                sign_extend(bus.read_16(usize::try_from(address)?).into(), 16),
-            )?,
-            (true, true, false) => self.registers.set(
-                source_destination_register,
-                u32::from(bus.read_16(usize::try_from(address)?)),
-            )?,
-            (true, false, false) => bus.write_16(
-                usize::try_from(address)?,
-                self.registers.get(source_destination_register)?.truncate(),
-            ),
-            (false, true, true) => self.registers.set(
-                source_destination_register,
-                sign_extend(bus.read_8(usize::try_from(address)?).into(), 8),
-            )?,
-            (false, true, false) => self.registers.set(
-                source_destination_register,
-                u32::from(bus.read_8(usize::try_from(address)?)),
-            )?,
-            (false, false, false) => bus.write_8(
-                usize::try_from(address)?,
-                self.registers.get(source_destination_register)?.truncate(),
-            ),
-            _ => return Err(CpuError::SignExtendWithStore),
+        self.halfword_data_transfer(
+            halfword,
+            load,
+            signed,
+            source_destination_register,
+            bus,
+            address,
+        )?;
+        if !load {
+            self.apply_write_back(write_back, pre_index, up, base_register, address, offset)?;
         }
         Ok(())
     }
@@ -659,27 +635,46 @@ impl Cpu {
             (true, false) => self.registers.get(base_register)?.wrapping_sub(offset),
             (false, _) => self.registers.get(base_register)?,
         };
-        match (write_back, pre_index, up) {
-            (false, true, _) => {}
-            (_, false, false) => self
-                .registers
-                .set(base_register, address.wrapping_sub(offset))?,
-            (_, false, true) => self
-                .registers
-                .set(base_register, address.wrapping_add(offset))?,
-            (true, true, _) => self.registers.set(base_register, address)?,
+        if load {
+            self.apply_write_back(write_back, pre_index, up, base_register, address, offset)?;
         }
+        self.halfword_data_transfer(
+            halfword,
+            load,
+            signed,
+            source_destination_register,
+            bus,
+            address,
+        )?;
+        if !load {
+            self.apply_write_back(write_back, pre_index, up, base_register, address, offset)?;
+        }
+        Ok(())
+    }
+
+    fn halfword_data_transfer(
+        &mut self,
+        halfword: bool,
+        load: bool,
+        signed: bool,
+        source_destination_register: u16,
+        bus: &mut Bus,
+        address: u32,
+    ) -> Result<(), CpuError> {
         match (halfword, load, signed) {
             (true, true, true) => self.registers.set(
                 source_destination_register,
-                sign_extend(bus.read_16(usize::try_from(address)?).into(), 16),
+                (sign_extend(bus.read_16(usize::try_from(address & !1)?).into(), 16).cast_signed()
+                    >> ((address & 1) * 8))
+                    .cast_unsigned(),
             )?,
             (true, true, false) => self.registers.set(
                 source_destination_register,
-                u32::from(bus.read_16(usize::try_from(address)?)),
+                u32::from(bus.read_16(usize::try_from(address & !1)?))
+                    .rotate_right((address & 1) * 8),
             )?,
             (true, false, false) => bus.write_16(
-                usize::try_from(address)?,
+                usize::try_from(address & !1)?,
                 self.registers.get(source_destination_register)?.truncate(),
             ),
             (false, true, true) => self.registers.set(
@@ -734,6 +729,45 @@ impl Cpu {
             (true, false) => self.registers.get(base_register)?.wrapping_sub(offset),
             (false, _) => self.registers.get(base_register)?,
         };
+        if load {
+            self.apply_write_back(write_back, pre_index, up, base_register, address, offset)?;
+        }
+        match (byte, load) {
+            (true, true) => self.registers.set(
+                source_destination_register,
+                u32::from(bus.read_8(usize::try_from(address)?)),
+            )?,
+            (true, false) => bus.write_8(
+                usize::try_from(address)?,
+                self.registers
+                    .get_store(source_destination_register)?
+                    .truncate(),
+            ),
+            (false, true) => self.registers.set(
+                source_destination_register,
+                bus.read_32(usize::try_from(address & !3)?)
+                    .rotate_right((address & 3) * 8),
+            )?,
+            (false, false) => bus.write_32(
+                usize::try_from(address & !3)?,
+                self.registers.get_store(source_destination_register)?,
+            ),
+        }
+        if !load {
+            self.apply_write_back(write_back, pre_index, up, base_register, address, offset)?;
+        }
+        Ok(())
+    }
+
+    fn apply_write_back(
+        &mut self,
+        write_back: bool,
+        pre_index: bool,
+        up: bool,
+        base_register: u16,
+        address: u32,
+        offset: u32,
+    ) -> Result<(), CpuError> {
         match (write_back, pre_index, up) {
             (false, true, _) => {}
             (_, false, false) => self
@@ -743,24 +777,6 @@ impl Cpu {
                 .registers
                 .set(base_register, address.wrapping_add(offset))?,
             (true, true, _) => self.registers.set(base_register, address)?,
-        }
-        match (byte, load) {
-            (true, true) => self.registers.set(
-                source_destination_register,
-                u32::from(bus.read_8(usize::try_from(address)?)),
-            )?,
-            (true, false) => bus.write_8(
-                usize::try_from(address)?,
-                self.registers.get(source_destination_register)?.truncate(),
-            ),
-            (false, true) => self.registers.set(
-                source_destination_register,
-                bus.read_32(usize::try_from(address)?),
-            )?,
-            (false, false) => bus.write_32(
-                usize::try_from(address)?,
-                self.registers.get(source_destination_register)?,
-            ),
         }
         Ok(())
     }
