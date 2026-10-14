@@ -20,7 +20,7 @@ pub mod registers;
 
 const SOFTWARE_INTERRUPT_ADDRESS: u32 = 0x0000_0008;
 
-#[derive(Error, Debug)]
+#[derive(Clone, Error, Debug)]
 pub enum CpuError {
     #[error("Error converting integers")]
     UsizeError(#[from] TryFromIntError),

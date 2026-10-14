@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::cpu::AluResult;
 
-#[derive(Error, Debug)]
+#[derive(Clone, Copy, Error, Debug)]
 pub enum RegisterError {
     #[error("Cannot get saved PSR for mode: {mode:?}")]
     LoadFromInvalidMode { mode: CpuMode },

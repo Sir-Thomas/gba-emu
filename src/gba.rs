@@ -6,12 +6,12 @@ use thiserror::Error;
 use crate::bus::{Bus, GAME_PAK_START_ADDRESS};
 use crate::cpu::registers::RegisterError;
 use crate::cpu::{Cpu, CpuError, Instruction};
-use crate::ppu::{DISPSTAT, Ppu, PpuError};
+use crate::ppu::{Ppu, PpuError};
 
 pub const DISPLAY_WIDTH: usize = 240;
 pub const DISPLAY_HEIGHT: usize = 160;
 
-#[derive(Error, Debug)]
+#[derive(Clone, Error, Debug)]
 pub enum GbaError {
     #[error("Cpu Error: {0}")]
     CpuError(#[from] CpuError),
@@ -40,28 +40,9 @@ impl Gba {
         self.cpu.back();
     }
 
-    pub fn cpu_cycle(&mut self) -> Result<(), GbaError> {
-        self.cpu.cpu_cycle(&mut self.bus).map_err(Into::into)
-    }
-
-    pub fn set_vblank(&mut self) {
-        let temp = self.bus.read_16(DISPSTAT);
-        self.bus.write_16(DISPSTAT, temp | 1);
-    }
-
-    pub fn clear_vblank(&mut self) {
-        let temp = self.bus.read_16(DISPSTAT);
-        self.bus.write_16(DISPSTAT, temp & !1);
-    }
-
-    pub fn set_hblank(&mut self) {
-        let temp = self.bus.read_16(DISPSTAT);
-        self.bus.write_16(DISPSTAT, temp | 2);
-    }
-
-    pub fn clear_hblank(&mut self) {
-        let temp = self.bus.read_16(DISPSTAT);
-        self.bus.write_16(DISPSTAT, temp & !2);
+    pub fn tick(&mut self) -> Result<(bool, bool), GbaError> {
+        self.cpu.cpu_cycle(&mut self.bus)?;
+        self.ppu.tick(&mut self.bus).map_err(Into::into)
     }
 
     pub fn next_instruction(&self) -> Result<(u32, Instruction), GbaError> {
@@ -130,7 +111,7 @@ impl Gba {
         }
     }
 
-    pub fn draw(&mut self) -> Result<&[u16], GbaError> {
-        self.ppu.draw(&mut self.bus).map_err(Into::into)
+    pub fn framebuffer(&mut self) -> &[u16] {
+        self.ppu.framebuffer()
     }
 }

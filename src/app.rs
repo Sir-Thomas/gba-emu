@@ -31,8 +31,6 @@ pub struct GbaApp {
     frame_time: MovingAverage<f64>,
     mode: Mode,
     text_input: String,
-    cycle: usize,
-    scanline: usize,
     step: bool,
     hblank_break: bool,
     vblank_break: bool,
@@ -59,8 +57,6 @@ impl GbaApp {
             frame_time: MovingAverage::new(FRAME_TIME_SAMPLES),
             mode: Mode::Stop,
             text_input: "0000".to_owned(),
-            cycle: 0,
-            scanline: 0,
             step: false,
             hblank_break: false,
             vblank_break: false,
@@ -69,44 +65,30 @@ impl GbaApp {
     }
 
     fn run(&mut self) {
-        while self.scanline < 228 {
-            if self.scanline == 0 {
-                self.gba.clear_vblank();
-            } else if self.scanline == 160 {
-                self.gba.set_vblank();
-                if self.vblank_break {
-                    self.mode = Mode::Stop;
-                    self.vblank_break = false;
-                    return;
-                }
-            }
-            while self.cycle < 1232 {
-                if self.cycle == 0 {
-                    self.gba.clear_hblank();
-                } else if self.cycle == 960 {
-                    self.gba.set_hblank();
-                    if self.hblank_break {
-                        self.mode = Mode::Stop;
-                        self.hblank_break = false;
-                        return;
-                    }
-                }
-                if let Err(e) = self.gba.cpu_cycle() {
+        let mut blanks = Ok((false, false));
+        while matches!(blanks.clone(), Ok((false, false)) | Ok((false, true))) {
+            blanks = self.gba.tick();
+            match (blanks.clone(), self.step) {
+                (Err(e), _) => {
                     self.mode = Mode::Stop;
                     println!("{e}");
                     return;
                 }
-                if self.step {
-                    self.mode = Mode::Stop;
+                (Ok((vblank, hblank)), false) => {
+                    if (self.vblank_break && vblank) || (self.hblank_break && hblank) {
+                        self.vblank_break = false;
+                        self.hblank_break = false;
+                        self.mode = Mode::Stop;
+                        return;
+                    }
+                }
+                (_, true) => {
                     self.step = false;
+                    self.mode = Mode::Stop;
                     return;
                 }
-                self.cycle += 1;
             }
-            self.cycle = 0;
-            self.scanline += 1;
         }
-        self.scanline = 0;
     }
 }
 
@@ -125,15 +107,9 @@ impl eframe::App for GbaApp {
         //cycles += 1.0;
         //}
 
-        // This gets things working for now. I'll need to move this into the ppu to run ROMs that
-        // need to update graphics mid-frame.
         if self.mode == Mode::Run {
             self.run();
-            let image = framebuffer_to_image(
-                self.gba
-                    .draw()
-                    .unwrap_or(&[0; DISPLAY_WIDTH * DISPLAY_HEIGHT]),
-            );
+            let image = framebuffer_to_image(self.gba.framebuffer());
             self.display_texture.set(image, TextureOptions::NEAREST);
         }
         CentralPanel::default().show(ui, |ui| {

@@ -2,6 +2,8 @@
 
 use std::array;
 
+use crate::ppu::DISPSTAT;
+
 const BIOS_ROM_SIZE: usize = 0x4000;
 const EXTERNAL_WORKING_RAM_SIZE: usize = 0x0004_0000;
 const INTERNAL_WORKING_RAM_SIZE: usize = 0x8000;
@@ -216,5 +218,33 @@ impl Bus {
     fn game_pak(&self, address: usize) -> u8 {
         let index = address.wrapping_sub(GAME_PAK_START_ADDRESS);
         self.game_pak[index]
+    }
+
+    pub fn vblank(&self) -> bool {
+        self.read_16(DISPSTAT) & 1 > 0
+    }
+
+    pub fn set_vblank(&mut self) {
+        let temp = self.read_16(DISPSTAT);
+        self.write_16(DISPSTAT, temp | 1);
+    }
+
+    pub fn clear_vblank(&mut self) {
+        let temp = self.read_16(DISPSTAT);
+        self.write_16(DISPSTAT, temp & !1);
+    }
+
+    pub fn hblank(&self) -> bool {
+        self.read_16(DISPSTAT) & 2 > 0
+    }
+
+    pub fn set_hblank(&mut self) {
+        let temp = self.read_16(DISPSTAT);
+        self.write_16(DISPSTAT, temp | 2);
+    }
+
+    pub fn clear_hblank(&mut self) {
+        let temp = self.read_16(DISPSTAT);
+        self.write_16(DISPSTAT, temp & !2);
     }
 }
