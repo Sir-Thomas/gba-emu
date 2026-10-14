@@ -1,0 +1,34 @@
+An ambitious attempt to make a GBA emulator.
+
+== Current status
+
+All CPU Instructions except coprocessor instructions have been implemented.
+Interrupts have not been implemented yet, and register banking is only partially supported.
+Instruction cycles are not accurate yet. Each instruction completes in only one cycle.
+
+CPU passes jsmolka's https://github.com/jsmolka/gba-tests[arm.gba] test and all https://github.com/DenSinH/FuzzARM[FuzzARM] tests.
+
+The PPU supports Mode 3 and 4.
+
+== Getting started
+
+If you have a rust dev environment setup, you can just clone the repo and run `cargo run <path/to/rom>`.
+The ROM will be loaded into the emulator and it will begin execution at the start of the cartridge memory.
+
+== Usage
+
+The UI has buttons for single stepping, jumping to H-Blank or V-Blank, and running at full speed.
+The emulator does not run at an accurate speed yet.
+
+== Roadmap
+
+- [ ] Interrupts
+- [ ] Input
+- [ ] DMA
+- [ ] Mode 0 rendering
+- [ ] Sprite rendering
+- [ ] Timers
+- [ ] Mode 1, 2, and 5 rendering
+- [ ] Correct cpu instruction cycles
+- [ ] Run at approximately the same speed as hardware
+- [ ] Audio
