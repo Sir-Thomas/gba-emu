@@ -98,10 +98,6 @@ impl Bus {
         for (i, byte) in bytes.iter().enumerate() {
             self.write_8(address.wrapping_add(i), *byte);
         }
-        //println!(
-        //"Wrote {value:#06X} to {address:#010X}. Result: {:#06X}",
-        //self.read_16(address)
-        //);
     }
 
     pub fn write_32(&mut self, address: usize, value: u32) {
