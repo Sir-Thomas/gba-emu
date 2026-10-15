@@ -1,21 +1,3 @@
-use std::num::TryFromIntError;
-
-use thiserror::Error;
-
-#[derive(Clone, Error, Debug)]
-pub enum DecodeError {
-    #[error("Error casting integer")]
-    IntegerCastError(#[from] TryFromIntError),
-    #[error("Attempting to decode u32 with start > 31")]
-    StartBitOutOfRange,
-    #[error("Attempting to decode u32 with end >= start")]
-    EndBitOutOfRange,
-    #[error("Attempting to decode bool from u32 bit > 31")]
-    BoolBitOutOfRange,
-    #[error("Could not decode {0}")]
-    UndefinedArmInstruction(u32),
-}
-
 #[derive(Clone, Copy, Debug)]
 pub enum Instruction {
     Arm(ArmInstruction),
@@ -137,14 +119,13 @@ const ARM_DECODE_TABLE: [ArmDecoder; 14] = [
     },
 ];
 
-pub fn arm_instruction(opcode: u32) -> Result<ArmInstruction, DecodeError> {
+pub fn arm_instruction(opcode: u32) -> ArmInstruction {
     ARM_DECODE_TABLE
         .iter()
         .find(|decoder| opcode & decoder.mask == decoder.value)
-        .map_or(
-            Err(DecodeError::UndefinedArmInstruction(opcode)),
-            |decoder| Ok((decoder.instruction)(opcode)),
-        )
+        .map_or(ArmInstruction::Undefined, |decoder| {
+            (decoder.instruction)(opcode)
+        })
 }
 
 fn branch_and_exchange(opcode: u32) -> ArmInstruction {
@@ -523,24 +504,36 @@ fn parse_second_operand(immediate: bool, operand: u32) -> SecondOperand {
 #[derive(Clone, Copy, Debug)]
 pub enum ThumbInstruction {
     SoftwareInterrupt,
-    UnconditionalBranch,
-    ConditionalBranch,
-    MultipleLoadstore,
-    LongBranchWithLink,
-    AddOffsetToStackPointer,
-    PushPopRegisters,
-    LoadStoreHalfword,
-    SPRelativeLoadStore,
-    LoadAddress,
-    LoadStoreWithImmediateOffset,
-    LoadStoreWithRegisterOffset,
-    LoadStoreSignExtendedByteHalfword,
-    PCRelativeLoad,
-    HiRegisterOperationsBranchExchange,
-    AluOperations,
-    MoveCompareAddSubtractImmediate,
-    AddSubtract,
-    MoveShiftedRegister,
+    UnconditionalBranch(i16),
+    ConditionalBranch {
+        conditions: u8,
+        offset: i32,
+    },
+    MultipleLoadstore(MultipleLoadstoreOperands),
+    LongBranchWithLink {
+        h: bool,
+        offset: u32,
+    },
+    AddOffsetToStackPointer {
+        subtract: bool,
+        offset: i32,
+    },
+    PushPopRegisters(PushPopRegistersOperands),
+    LoadStoreHalfword(LoadStoreHalfwordOperands),
+    SpRelativeLoadStore(SpRelativeLoadStoreOperands),
+    LoadAddress(LoadAddressOperands),
+    LoadStoreWithImmediateOffset(LoadStoreWithImmediateOffsetOperands),
+    LoadStoreWithRegisterOffset(LoadStoreWithRegisterOffsetOperands),
+    LoadStoreSignExtendedByteHalfword(LoadStoreSignExtendedByteHalfwordOperands),
+    PCRelativeLoad {
+        destination_register: u16,
+        offset: u8,
+    },
+    HiRegisterOperationsBranchExchange(ThumbOperands),
+    AluOperations(ThumbOperands),
+    MoveCompareAddSubtractImmediate(MoveCompareAddSubtractImmediateOperands),
+    AddSubtract(AddSubtractOperands),
+    MoveShiftedRegister(MoveShiftedRegisterOperands),
     Unimplemented,
 }
 
@@ -548,104 +541,104 @@ pub enum ThumbInstruction {
 struct ThumbDecoder {
     mask: u16,
     value: u16,
-    instruction: ThumbInstruction,
+    instruction: fn(u16) -> ThumbInstruction,
 }
 
 const THUMB_DECODE_TABLE: [ThumbDecoder; 19] = [
     ThumbDecoder {
         mask: 0xFF00,
         value: 0xDF00,
-        instruction: ThumbInstruction::SoftwareInterrupt,
+        instruction: |_| ThumbInstruction::SoftwareInterrupt,
     },
     ThumbDecoder {
         mask: 0xF800,
         value: 0xE000,
-        instruction: ThumbInstruction::UnconditionalBranch,
+        instruction: unconditional_branch,
     },
     ThumbDecoder {
         mask: 0xF000,
         value: 0xD000,
-        instruction: ThumbInstruction::ConditionalBranch,
+        instruction: conditional_branch,
     },
     ThumbDecoder {
         mask: 0xF000,
         value: 0xC000,
-        instruction: ThumbInstruction::MultipleLoadstore,
+        instruction: multiple_loadstore,
     },
     ThumbDecoder {
         mask: 0xF000,
         value: 0xF000,
-        instruction: ThumbInstruction::LongBranchWithLink,
+        instruction: long_branch_with_link,
     },
     ThumbDecoder {
         mask: 0xFF00,
         value: 0xB000,
-        instruction: ThumbInstruction::AddOffsetToStackPointer,
+        instruction: add_offset_to_stack_pointer,
     },
     ThumbDecoder {
         mask: 0xF600,
         value: 0xB400,
-        instruction: ThumbInstruction::PushPopRegisters,
+        instruction: push_pop_registers,
     },
     ThumbDecoder {
         mask: 0xF000,
         value: 0x8000,
-        instruction: ThumbInstruction::LoadStoreHalfword,
+        instruction: load_store_halfword,
     },
     ThumbDecoder {
         mask: 0xF000,
         value: 0x9000,
-        instruction: ThumbInstruction::SPRelativeLoadStore,
+        instruction: sp_relative_load_store,
     },
     ThumbDecoder {
         mask: 0xF000,
         value: 0xA000,
-        instruction: ThumbInstruction::LoadAddress,
+        instruction: load_address,
     },
     ThumbDecoder {
         mask: 0xE000,
         value: 0x6000,
-        instruction: ThumbInstruction::LoadStoreWithImmediateOffset,
+        instruction: load_store_with_immediate_offset,
     },
     ThumbDecoder {
         mask: 0xF200,
         value: 0x5000,
-        instruction: ThumbInstruction::LoadStoreWithRegisterOffset,
+        instruction: load_store_with_register_offset,
     },
     ThumbDecoder {
         mask: 0xF200,
         value: 0x5200,
-        instruction: ThumbInstruction::LoadStoreSignExtendedByteHalfword,
+        instruction: load_store_sign_extended_byte_halfword,
     },
     ThumbDecoder {
         mask: 0xF800,
         value: 0x4800,
-        instruction: ThumbInstruction::PCRelativeLoad,
+        instruction: pc_relative_load,
     },
     ThumbDecoder {
         mask: 0xFC00,
         value: 0x4400,
-        instruction: ThumbInstruction::HiRegisterOperationsBranchExchange,
+        instruction: hi_register_operations_branch_exchange,
     },
     ThumbDecoder {
         mask: 0xFC00,
         value: 0x4000,
-        instruction: ThumbInstruction::AluOperations,
+        instruction: alu_operations,
     },
     ThumbDecoder {
         mask: 0xE000,
         value: 0x2000,
-        instruction: ThumbInstruction::MoveCompareAddSubtractImmediate,
+        instruction: move_compare_add_subtract_immediate,
     },
     ThumbDecoder {
         mask: 0xF800,
         value: 0x1800,
-        instruction: ThumbInstruction::AddSubtract,
+        instruction: add_subtract,
     },
     ThumbDecoder {
         mask: 0xE000,
         value: 0x0000,
-        instruction: ThumbInstruction::MoveShiftedRegister,
+        instruction: move_shifted_register,
     },
 ];
 
@@ -654,8 +647,338 @@ pub fn thumb_instruction(opcode: u16) -> ThumbInstruction {
         .iter()
         .find(|decoder| opcode & decoder.mask == decoder.value)
         .map_or(ThumbInstruction::Unimplemented, |decoder| {
-            decoder.instruction
+            (decoder.instruction)(opcode)
         })
+}
+
+fn unconditional_branch(opcode: u16) -> ThumbInstruction {
+    // Offset is a 12 bit value, but is stored as 11 bits (lsb is dropped) because it must be halfword aligned
+    let offset = signed_bits16::<10, 0>(opcode) << 1;
+    ThumbInstruction::UnconditionalBranch(offset)
+}
+
+fn conditional_branch(opcode: u16) -> ThumbInstruction {
+    let conditions = bits16::<11, 8>(opcode).truncate();
+    let offset = (signed_bits16::<7, 0>(opcode) << 1).into();
+    ThumbInstruction::ConditionalBranch { conditions, offset }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MultipleLoadstoreOperands {
+    pub load: bool,
+    pub base_register: u16,
+    pub register_list: u8,
+}
+
+fn multiple_loadstore(opcode: u16) -> ThumbInstruction {
+    let load = bit16::<11>(opcode);
+    let base_register = bits16::<10, 8>(opcode);
+    let register_list = bits16::<7, 0>(opcode).truncate();
+    ThumbInstruction::MultipleLoadstore(MultipleLoadstoreOperands {
+        load,
+        base_register,
+        register_list,
+    })
+}
+
+fn long_branch_with_link(opcode: u16) -> ThumbInstruction {
+    let h = bit16::<11>(opcode);
+    let offset = (bits16::<10, 0>(opcode) << 1).into();
+    ThumbInstruction::LongBranchWithLink { h, offset }
+}
+
+fn add_offset_to_stack_pointer(opcode: u16) -> ThumbInstruction {
+    let subtract = bit16::<7>(opcode);
+    let offset = (signed_bits16::<6, 0>(opcode) << 2).into();
+    ThumbInstruction::AddOffsetToStackPointer { subtract, offset }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PushPopRegistersOperands {
+    pub load: bool,
+    pub pc_lr: bool,
+    pub register_list: u8,
+}
+
+fn push_pop_registers(opcode: u16) -> ThumbInstruction {
+    let load = bit16::<11>(opcode);
+    let pc_lr = bit16::<8>(opcode);
+    let register_list = bits16::<7, 0>(opcode).truncate();
+    ThumbInstruction::PushPopRegisters(PushPopRegistersOperands {
+        load,
+        pc_lr,
+        register_list,
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct LoadStoreHalfwordOperands {
+    pub load: bool,
+    pub offset: u8,
+    pub base_register: u16,
+    pub source_destination_register: u16,
+}
+
+fn load_store_halfword(opcode: u16) -> ThumbInstruction {
+    let load = bit16::<11>(opcode);
+    let offset = (bits16::<10, 6>(opcode) << 1).truncate();
+    let base_register = bits16::<5, 3>(opcode);
+    let source_destination_register = bits16::<2, 0>(opcode);
+    ThumbInstruction::LoadStoreHalfword(LoadStoreHalfwordOperands {
+        load,
+        offset,
+        base_register,
+        source_destination_register,
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SpRelativeLoadStoreOperands {
+    pub load: bool,
+    pub destination_register: u16,
+    pub offset: u8,
+}
+
+fn sp_relative_load_store(opcode: u16) -> ThumbInstruction {
+    let load = bit16::<11>(opcode);
+    let destination_register = bits16::<10, 8>(opcode);
+    let offset = bits16::<7, 0>(opcode).truncate();
+    ThumbInstruction::SpRelativeLoadStore(SpRelativeLoadStoreOperands {
+        load,
+        destination_register,
+        offset,
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct LoadAddressOperands {
+    pub source: bool,
+    pub destination_register: u16,
+    pub word: u8,
+}
+
+fn load_address(opcode: u16) -> ThumbInstruction {
+    let source = bit16::<11>(opcode);
+    let destination_register = bits16::<10, 8>(opcode);
+    let word = (bits16::<7, 0>(opcode) << 2).truncate();
+    ThumbInstruction::LoadAddress(LoadAddressOperands {
+        source,
+        destination_register,
+        word,
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct LoadStoreWithImmediateOffsetOperands {
+    pub load: bool,
+    pub byte: bool,
+    pub offset: u8,
+    pub base_register: u16,
+    pub source_destination_register: u16,
+}
+
+fn load_store_with_immediate_offset(opcode: u16) -> ThumbInstruction {
+    let byte = bit16::<12>(opcode);
+    let load = bit16::<11>(opcode);
+    let offset = bits16::<10, 6>(opcode).truncate();
+    let base_register = bits16::<5, 3>(opcode);
+    let source_destination_register = bits16::<2, 0>(opcode);
+    ThumbInstruction::LoadStoreWithImmediateOffset(LoadStoreWithImmediateOffsetOperands {
+        load,
+        byte,
+        offset,
+        base_register,
+        source_destination_register,
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct LoadStoreWithRegisterOffsetOperands {
+    pub load: bool,
+    pub byte: bool,
+    pub offset_register: u16,
+    pub base_register: u16,
+    pub source_destination_register: u16,
+}
+
+fn load_store_with_register_offset(opcode: u16) -> ThumbInstruction {
+    let load = bit16::<11>(opcode);
+    let byte = bit16::<10>(opcode);
+    let offset_register = bits16::<8, 6>(opcode);
+    let base_register = bits16::<5, 3>(opcode);
+    let source_destination_register = bits16::<2, 0>(opcode);
+    ThumbInstruction::LoadStoreWithRegisterOffset(LoadStoreWithRegisterOffsetOperands {
+        load,
+        byte,
+        offset_register,
+        base_register,
+        source_destination_register,
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct LoadStoreSignExtendedByteHalfwordOperands {
+    pub halfword: bool,
+    pub signed: bool,
+    pub offset_register: u16,
+    pub base_register: u16,
+    pub source_destination_register: u16,
+}
+
+fn load_store_sign_extended_byte_halfword(opcode: u16) -> ThumbInstruction {
+    let halfword = bit16::<11>(opcode);
+    let signed = bit16::<10>(opcode);
+    let offset_register = bits16::<8, 6>(opcode);
+    let base_register = bits16::<5, 3>(opcode);
+    let source_destination_register = bits16::<2, 0>(opcode);
+    ThumbInstruction::LoadStoreSignExtendedByteHalfword(LoadStoreSignExtendedByteHalfwordOperands {
+        halfword,
+        signed,
+        offset_register,
+        base_register,
+        source_destination_register,
+    })
+}
+
+fn pc_relative_load(opcode: u16) -> ThumbInstruction {
+    let destination_register = bits16::<10, 8>(opcode);
+    let offset = (bits16::<7, 0>(opcode) << 2).truncate();
+    ThumbInstruction::PCRelativeLoad {
+        destination_register,
+        offset,
+    }
+}
+
+fn hi_register_operations_branch_exchange(opcode: u16) -> ThumbInstruction {
+    let sub_opcode = bits16::<9, 8>(opcode).truncate();
+    let hi1 = bit16::<7>(opcode);
+    let hi2 = bit16::<6>(opcode);
+    let mut source_register = bits16::<5, 3>(opcode);
+    let mut destination_register = bits16::<2, 0>(opcode);
+    if hi1 {
+        destination_register = destination_register.wrapping_add(8);
+    }
+    if hi2 {
+        source_register = source_register.wrapping_add(8);
+    }
+    ThumbInstruction::HiRegisterOperationsBranchExchange(ThumbOperands {
+        sub_opcode,
+        source_register,
+        destination_register,
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ThumbOperands {
+    pub sub_opcode: u8,
+    pub source_register: u16,
+    pub destination_register: u16,
+}
+
+fn alu_operations(opcode: u16) -> ThumbInstruction {
+    let sub_opcode = bits16::<9, 6>(opcode).truncate();
+    let source_register = bits16::<5, 3>(opcode);
+    let destination_register = bits16::<2, 0>(opcode);
+    ThumbInstruction::AluOperations(ThumbOperands {
+        sub_opcode,
+        source_register,
+        destination_register,
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MoveCompareAddSubtractOperation {
+    Move,
+    Compare,
+    Add,
+    Subtract,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MoveCompareAddSubtractImmediateOperands {
+    pub operation: MoveCompareAddSubtractOperation,
+    pub destination_register: u16,
+    pub immediate_value: u32,
+}
+
+fn move_compare_add_subtract_immediate(opcode: u16) -> ThumbInstruction {
+    let operation = match (bit16::<12>(opcode), bit16::<11>(opcode)) {
+        (false, false) => MoveCompareAddSubtractOperation::Move,
+        (false, true) => MoveCompareAddSubtractOperation::Compare,
+        (true, false) => MoveCompareAddSubtractOperation::Add,
+        (true, true) => MoveCompareAddSubtractOperation::Subtract,
+    };
+    let destination_register = bits16::<10, 8>(opcode);
+    let immediate_value = bits16::<7, 0>(opcode).into();
+    ThumbInstruction::MoveCompareAddSubtractImmediate(MoveCompareAddSubtractImmediateOperands {
+        operation,
+        destination_register,
+        immediate_value,
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum AddSubtractOperation {
+    AddRegister,
+    AddImmediate,
+    SubtractRegister,
+    SubtractImmediate,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AddSubtractOperands {
+    pub operation: AddSubtractOperation,
+    pub register_3: u16,
+    pub immediate_value: u32,
+    pub source_register: u16,
+    pub destination_register: u16,
+}
+
+fn add_subtract(opcode: u16) -> ThumbInstruction {
+    let immediate = bit16::<10>(opcode);
+    let sub_opcode = bit16::<9>(opcode);
+    let register_3 = bits16::<8, 6>(opcode);
+    let immediate_value = bits16::<8, 6>(opcode).into();
+    let source_register = bits16::<5, 3>(opcode);
+    let destination_register = bits16::<2, 0>(opcode);
+    let operation = match (sub_opcode, immediate) {
+        (false, false) => AddSubtractOperation::AddRegister,
+        (false, true) => AddSubtractOperation::AddImmediate,
+        (true, false) => AddSubtractOperation::SubtractRegister,
+        (true, true) => AddSubtractOperation::SubtractImmediate,
+    };
+    ThumbInstruction::AddSubtract(AddSubtractOperands {
+        operation,
+        register_3,
+        immediate_value,
+        source_register,
+        destination_register,
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MoveShiftedRegisterOperands {
+    pub opcode: u8,
+    pub immediate_value: u32,
+    pub source_register: u16,
+    pub destination_register: u16,
+}
+
+fn move_shifted_register(opcode: u16) -> ThumbInstruction {
+    let sub_opcode = bits16::<12, 11>(opcode).truncate();
+    let immediate_value = bits16::<10, 6>(opcode).into();
+    let source_register = bits16::<5, 3>(opcode);
+    let destination_register = bits16::<2, 0>(opcode);
+    // Not sure about this, but ai says to do it. Need to find the correct documentation.
+    //if immediate_value == 0 {
+    //immediate_value = 32;
+    //}
+    ThumbInstruction::MoveShiftedRegister(MoveShiftedRegisterOperands {
+        opcode: sub_opcode,
+        immediate_value,
+        source_register,
+        destination_register,
+    })
 }
 
 const fn bits32<const START: usize, const END: usize>(opcode: u32) -> u32 {
@@ -679,6 +1002,31 @@ const fn signed_bits32<const START: usize, const END: usize>(opcode: u32) -> i32
 const fn bit32<const BIT: usize>(opcode: u32) -> bool {
     const {
         assert!(BIT < 32, "Bit must be less than 32");
+    }
+    (opcode >> BIT) & 1 > 0
+}
+
+const fn bits16<const START: usize, const END: usize>(opcode: u16) -> u16 {
+    const {
+        assert!(START < 16, "Start bit must be less than 16");
+        assert!(END < START, "End bit must be less than start bit");
+    }
+    let left = 15 - START;
+    (opcode << left) >> (left + END)
+}
+
+const fn signed_bits16<const START: usize, const END: usize>(opcode: u16) -> i16 {
+    const {
+        assert!(START < 16, "Start bit must be less than 16");
+        assert!(END < START, "End bit must be less than start bit");
+    }
+    let left = 15 - START;
+    (opcode.cast_signed() << left) >> (left + END)
+}
+
+const fn bit16<const BIT: usize>(opcode: u16) -> bool {
+    const {
+        assert!(BIT < 16, "Bit must be less than 16");
     }
     (opcode >> BIT) & 1 > 0
 }
