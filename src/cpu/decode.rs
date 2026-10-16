@@ -171,7 +171,7 @@ fn block_data_transfer(opcode: u32) -> ArmInstruction {
     })
 }
 
-fn branch(opcode: u32) -> ArmInstruction {
+const fn branch(opcode: u32) -> ArmInstruction {
     let link = bit32::<24>(opcode);
     let offset = signed_bits32::<23, 0>(opcode) << 2;
     ArmInstruction::Branch { link, offset }
@@ -376,13 +376,6 @@ pub struct PsrTransferMsrOperands {
 }
 
 fn psr_transfer_msr(opcode: u32) -> ArmInstruction {
-    const IMMEDIATE_VALUE_BIT: u32 = 1 << 25;
-    const SOURCE_PSR_BIT: u32 = 1 << 22;
-    const MODE_INCLUDED_BIT: u32 = 1 << 16;
-    const ROTATE_MASK: u32 = 0x0000_0F00;
-    const ROTATE_SHIFT: usize = 8;
-    const IMMEDIATE_VALUE_MASK: u32 = 0x0000_00FF;
-    const REGISTER_MASK: u32 = 0x0000_000F;
     let immediate = bit32::<25>(opcode);
     let saved = bit32::<22>(opcode);
     let mode_included = bit32::<16>(opcode);
@@ -462,15 +455,6 @@ pub struct DataProcessingOperands {
 }
 
 fn data_processing(opcode: u32) -> ArmInstruction {
-    const IMMEDIATE_VALUE_BIT: u32 = 1 << 25;
-    const OPCODE_MASK: u32 = 0x01E0_0000;
-    const OPCODE_SHIFT: usize = 21;
-    const SET_CONDITIONS_BIT: u32 = 1 << 20;
-    const FIRST_OPERAND_REGISTER_MASK: u32 = 0x000F_0000;
-    const FIRST_OPERAND_REGISTER_SHIFT: usize = 16;
-    const DESTINATION_REGISTER_MASK: u32 = 0x0000_F000;
-    const DESTINATION_REGISTER_SHIFT: usize = 12;
-    const SECOND_OPERAND_MASK: u32 = 0x0000_0FFF;
     let immediate = bit32::<25>(opcode);
     let operation = DataProcessingOperation::from(bits32::<24, 21>(opcode));
     let destination_register = bits32::<15, 12>(opcode).truncate();
@@ -522,8 +506,7 @@ pub enum ThumbInstruction {
     LoadStoreHalfword(LoadStoreHalfwordOperands),
     SpRelativeLoadStore(SpRelativeLoadStoreOperands),
     LoadAddress(LoadAddressOperands),
-    LoadStoreWithImmediateOffset(LoadStoreWithImmediateOffsetOperands),
-    LoadStoreWithRegisterOffset(LoadStoreWithRegisterOffsetOperands),
+    LoadStoreWithOffset(LoadStoreWithOffsetOperands),
     LoadStoreSignExtendedByteHalfword(LoadStoreSignExtendedByteHalfwordOperands),
     PCRelativeLoad {
         destination_register: u16,
@@ -651,7 +634,7 @@ pub fn thumb_instruction(opcode: u16) -> ThumbInstruction {
         })
 }
 
-fn unconditional_branch(opcode: u16) -> ThumbInstruction {
+const fn unconditional_branch(opcode: u16) -> ThumbInstruction {
     // Offset is a 12 bit value, but is stored as 11 bits (lsb is dropped) because it must be halfword aligned
     let offset = signed_bits16::<10, 0>(opcode) << 1;
     ThumbInstruction::UnconditionalBranch(offset)
@@ -769,10 +752,16 @@ fn load_address(opcode: u16) -> ThumbInstruction {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct LoadStoreWithImmediateOffsetOperands {
+pub enum Offset {
+    Register(u16),
+    Immediate(u32),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct LoadStoreWithOffsetOperands {
     pub load: bool,
     pub byte: bool,
-    pub offset: u8,
+    pub offset: Offset,
     pub base_register: u16,
     pub source_destination_register: u16,
 }
@@ -780,25 +769,16 @@ pub struct LoadStoreWithImmediateOffsetOperands {
 fn load_store_with_immediate_offset(opcode: u16) -> ThumbInstruction {
     let byte = bit16::<12>(opcode);
     let load = bit16::<11>(opcode);
-    let offset = bits16::<10, 6>(opcode).truncate();
+    let offset = bits16::<10, 6>(opcode).into();
     let base_register = bits16::<5, 3>(opcode);
     let source_destination_register = bits16::<2, 0>(opcode);
-    ThumbInstruction::LoadStoreWithImmediateOffset(LoadStoreWithImmediateOffsetOperands {
+    ThumbInstruction::LoadStoreWithOffset(LoadStoreWithOffsetOperands {
         load,
         byte,
-        offset,
+        offset: Offset::Immediate(offset),
         base_register,
         source_destination_register,
     })
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct LoadStoreWithRegisterOffsetOperands {
-    pub load: bool,
-    pub byte: bool,
-    pub offset_register: u16,
-    pub base_register: u16,
-    pub source_destination_register: u16,
 }
 
 fn load_store_with_register_offset(opcode: u16) -> ThumbInstruction {
@@ -807,10 +787,10 @@ fn load_store_with_register_offset(opcode: u16) -> ThumbInstruction {
     let offset_register = bits16::<8, 6>(opcode);
     let base_register = bits16::<5, 3>(opcode);
     let source_destination_register = bits16::<2, 0>(opcode);
-    ThumbInstruction::LoadStoreWithRegisterOffset(LoadStoreWithRegisterOffsetOperands {
+    ThumbInstruction::LoadStoreWithOffset(LoadStoreWithOffsetOperands {
         load,
         byte,
-        offset_register,
+        offset: Offset::Register(offset_register),
         base_register,
         source_destination_register,
     })
@@ -825,7 +805,7 @@ pub struct LoadStoreSignExtendedByteHalfwordOperands {
     pub source_destination_register: u16,
 }
 
-fn load_store_sign_extended_byte_halfword(opcode: u16) -> ThumbInstruction {
+const fn load_store_sign_extended_byte_halfword(opcode: u16) -> ThumbInstruction {
     let halfword = bit16::<11>(opcode);
     let signed = bit16::<10>(opcode);
     let offset_register = bits16::<8, 6>(opcode);

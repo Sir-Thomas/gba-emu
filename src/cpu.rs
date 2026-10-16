@@ -58,7 +58,7 @@ pub enum CpuError {
         program_counter: u32,
         opcode: u32,
         #[source]
-        source: Box<CpuError>,
+        source: Box<Self>,
     },
 }
 
@@ -123,7 +123,7 @@ impl Cpu {
 
     // This doesn't really work
     // It can't handle branches or mode changes, but it gets me what I need for now
-    pub fn back(&mut self) {
+    pub const fn back(&mut self) {
         match self.registers.state() {
             InstructionSet::Arm => self.registers.program_counter -= 4,
             InstructionSet::Thumb => self.registers.program_counter -= 2,
@@ -191,7 +191,7 @@ impl Cpu {
         }
     }
 
-    fn shift(&mut self, operand: u32) -> Result<AluResult, CpuError> {
+    fn shift(&self, operand: u32) -> Result<AluResult, CpuError> {
         const IMMEDIATE_VALUE_MASK: u32 = 0x0000_0F80;
         const IMMEDIATE_VALUE_SHIFT: usize = 7;
         const SHIFT_REGISTER_MASK: u32 = 0x0000_0F00;
@@ -263,13 +263,21 @@ impl Cpu {
         }
         let carry_flag = u32::from(self.registers.carry());
         let result = match operands.operation {
-            DataProcessingOperation::And => alu::and(first_operand, second_operand),
-            DataProcessingOperation::Xor => alu::xor(first_operand, second_operand),
-            DataProcessingOperation::Subtract => alu::subtract(first_operand, second_operand),
+            DataProcessingOperation::And | DataProcessingOperation::TestAnd => {
+                alu::and(first_operand, second_operand)
+            }
+            DataProcessingOperation::Xor | DataProcessingOperation::TestXor => {
+                alu::xor(first_operand, second_operand)
+            }
+            DataProcessingOperation::Subtract | DataProcessingOperation::TestSubtract => {
+                alu::subtract(first_operand, second_operand)
+            }
             DataProcessingOperation::ReverseSubtract => {
                 alu::subtract(second_operand, first_operand)
             }
-            DataProcessingOperation::Add => alu::add(first_operand, second_operand),
+            DataProcessingOperation::Add | DataProcessingOperation::TestAdd => {
+                alu::add(first_operand, second_operand)
+            }
             DataProcessingOperation::AddWithCarry => {
                 alu::add_carry(first_operand, second_operand, carry_flag)
             }
@@ -279,10 +287,6 @@ impl Cpu {
             DataProcessingOperation::ReverseSubtractWithCarry => {
                 alu::sub_carry(second_operand, first_operand, carry_flag)
             }
-            DataProcessingOperation::TestAnd => alu::and(first_operand, second_operand),
-            DataProcessingOperation::TestXor => alu::xor(first_operand, second_operand),
-            DataProcessingOperation::TestSubtract => alu::subtract(first_operand, second_operand),
-            DataProcessingOperation::TestAdd => alu::add(first_operand, second_operand),
             DataProcessingOperation::Or => alu::or(first_operand, second_operand),
             DataProcessingOperation::Move => alu::nop(second_operand),
             DataProcessingOperation::BitClear => alu::and(first_operand, !second_operand),
@@ -432,15 +436,16 @@ impl Cpu {
     }
 
     fn data_write(
-        &mut self,
+        &self,
         byte: bool,
         value: u32,
         bus: &mut Bus,
         address: u32,
     ) -> Result<(), CpuError> {
-        match byte {
-            true => bus.write_8(usize::try_from(address)?, value.truncate()),
-            false => bus.write_32(usize::try_from(address & !3)?, value),
+        if byte {
+            bus.write_8(usize::try_from(address)?, value.truncate());
+        } else {
+            bus.write_32(usize::try_from(address & !3)?, value);
         }
         Ok(())
     }
@@ -815,7 +820,8 @@ impl Cpu {
                 self.long_branch_with_link(h, offset)
             }
             ThumbInstruction::AddOffsetToStackPointer { subtract, offset } => {
-                self.add_offset_to_stack_pointer(subtract, offset)
+                self.add_offset_to_stack_pointer(subtract, offset);
+                Ok(())
             }
             ThumbInstruction::PushPopRegisters(operands) => self.push_pop_registers(operands, bus),
             ThumbInstruction::LoadStoreHalfword(operands) => {
@@ -825,11 +831,8 @@ impl Cpu {
                 self.sp_relative_load_store(operands, bus)
             }
             ThumbInstruction::LoadAddress(operands) => self.load_address(operands),
-            ThumbInstruction::LoadStoreWithImmediateOffset(operands) => {
-                self.load_store_with_immediate_offset(operands, bus)
-            }
-            ThumbInstruction::LoadStoreWithRegisterOffset(operands) => {
-                self.load_store_with_register_offset(operands, bus)
+            ThumbInstruction::LoadStoreWithOffset(operands) => {
+                self.load_store_with_offset(operands, bus)
             }
             ThumbInstruction::LoadStoreSignExtendedByteHalfword(operands) => {
                 self.load_store_sign_extended_byte_halfword(operands, bus)
@@ -934,13 +937,12 @@ impl Cpu {
         Ok(())
     }
 
-    fn add_offset_to_stack_pointer(&mut self, subtract: bool, offset: i32) -> Result<(), CpuError> {
+    const fn add_offset_to_stack_pointer(&mut self, subtract: bool, offset: i32) {
         if subtract {
             self.registers.stack_pointer = self.registers.stack_pointer.wrapping_sub_signed(offset);
         } else {
             self.registers.stack_pointer = self.registers.stack_pointer.wrapping_add_signed(offset);
         }
-        Ok(())
     }
 
     fn push_pop_registers(
@@ -1064,56 +1066,28 @@ impl Cpu {
         Ok(())
     }
 
-    fn load_store_with_immediate_offset(
+    fn load_store_with_offset(
         &mut self,
-        operands: LoadStoreWithImmediateOffsetOperands,
+        operands: LoadStoreWithOffsetOperands,
         bus: &mut Bus,
     ) -> Result<(), CpuError> {
-        let byte_address = usize::try_from(
-            self.registers
-                .get(operands.base_register)?
-                .wrapping_add(u32::from(operands.offset)),
-        )?;
-        let word_address = usize::try_from(
-            self.registers
-                .get(operands.base_register)?
-                .wrapping_add(u32::from(operands.offset << 2)),
-        )?;
-        match (operands.load, operands.byte) {
-            (true, true) => self.registers.set(
-                operands.source_destination_register,
-                u32::from(bus.read_8(byte_address)),
-            )?,
-            (true, false) => self.registers.set(
-                operands.source_destination_register,
-                bus.read_32(word_address),
-            )?,
-            (false, true) => bus.write_8(
-                byte_address,
+        let address = match (operands.offset, operands.byte) {
+            (Offset::Register(register), _) => usize::try_from(
                 self.registers
-                    .get(operands.source_destination_register)?
-                    .truncate(),
-            ),
-            (false, false) => {
-                bus.write_32(
-                    word_address,
-                    self.registers.get(operands.source_destination_register)?,
-                );
-            }
-        }
-        Ok(())
-    }
-
-    fn load_store_with_register_offset(
-        &mut self,
-        operands: LoadStoreWithRegisterOffsetOperands,
-        bus: &mut Bus,
-    ) -> Result<(), CpuError> {
-        let address = usize::try_from(
-            self.registers
-                .get(operands.base_register)?
-                .wrapping_add(self.registers.get(operands.offset_register)?),
-        )?;
+                    .get(operands.base_register)?
+                    .wrapping_add(self.registers.get(register)?),
+            )?,
+            (Offset::Immediate(offset), true) => usize::try_from(
+                self.registers
+                    .get(operands.base_register)?
+                    .wrapping_add(offset),
+            )?,
+            (Offset::Immediate(offset), false) => usize::try_from(
+                self.registers
+                    .get(operands.base_register)?
+                    .wrapping_add(u32::from(offset << 2)),
+            )?,
+        };
         match (operands.load, operands.byte) {
             (true, true) => self.registers.set(
                 operands.source_destination_register,
@@ -1224,7 +1198,7 @@ impl Cpu {
 
     fn alu_operations(&mut self, operands: ThumbOperands) -> Result<(), CpuError> {
         let alu_result = match operands.sub_opcode {
-            0x00 => alu::and(
+            0x00 | 0x08 => alu::and(
                 self.registers.get(operands.destination_register)?,
                 self.registers.get(operands.source_register)?,
             ),
@@ -1255,10 +1229,6 @@ impl Cpu {
                 self.registers.carry().into(),
             ),
             0x07 => alu::rotate_right(
-                self.registers.get(operands.destination_register)?,
-                self.registers.get(operands.source_register)?,
-            ),
-            0x08 => alu::and(
                 self.registers.get(operands.destination_register)?,
                 self.registers.get(operands.source_register)?,
             ),
@@ -1387,7 +1357,7 @@ fn conditions(opcode: u32) -> u8 {
     ((opcode & MASK) >> SHIFT).truncate()
 }
 
-fn sign_extend(value: u32, size: u32) -> u32 {
+const fn sign_extend(value: u32, size: u32) -> u32 {
     ((value << (32 - size)).cast_signed() >> (32 - size)).cast_unsigned()
 }
 

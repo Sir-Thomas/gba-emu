@@ -111,7 +111,7 @@ impl Gba {
         }
     }
 
-    pub fn framebuffer(&mut self) -> &[u16] {
+    pub fn framebuffer(&self) -> &[u16] {
         self.ppu.framebuffer()
     }
 }

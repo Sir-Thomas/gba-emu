@@ -148,10 +148,10 @@ impl Ppu {
     }
 
     fn mode4_pixel(&self, address: usize, bus: &Bus) -> u16 {
-        let start_address = if !self.frame_select {
-            FRAME0_START
-        } else {
+        let start_address = if self.frame_select {
             FRAME1_START
+        } else {
+            FRAME0_START
         };
         let pixel_data = bus.read_8(address.wrapping_add(start_address));
         bus.read_16(PALETTE.wrapping_add(usize::from(pixel_data).wrapping_mul(2)))

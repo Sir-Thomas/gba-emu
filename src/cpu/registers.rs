@@ -58,13 +58,13 @@ impl TryFrom<u32> for CpuMode {
 
     fn try_from(val: u32) -> Result<Self, Self::Error> {
         match val & 0b11111 {
-            0b10000 => Ok(CpuMode::User),
-            0b10001 => Ok(CpuMode::Fiq),
-            0b10010 => Ok(CpuMode::Irq),
-            0b10011 => Ok(CpuMode::Supervisor),
-            0b10111 => Ok(CpuMode::Abort),
-            0b11011 => Ok(CpuMode::Undefined),
-            0b11111 => Ok(CpuMode::System),
+            0b10000 => Ok(Self::User),
+            0b10001 => Ok(Self::Fiq),
+            0b10010 => Ok(Self::Irq),
+            0b10011 => Ok(Self::Supervisor),
+            0b10111 => Ok(Self::Abort),
+            0b11011 => Ok(Self::Undefined),
+            0b11111 => Ok(Self::System),
             mode => Err(RegisterError::InvalidCpuMode { mode }),
         }
     }
@@ -187,7 +187,7 @@ impl StatusRegisters {
         }
     }
 
-    pub fn set_conditions(&mut self, alu_result: AluResult) {
+    pub const fn set_conditions(&mut self, alu_result: AluResult) {
         self.current.negative = alu_result.result & 0x8000_0000 > 0;
         self.current.zero = alu_result.result == 0;
         if let Some(c) = alu_result.carry {
@@ -198,13 +198,13 @@ impl StatusRegisters {
         }
     }
 
-    pub fn set_carry(&mut self, carry: Option<bool>) {
+    pub const fn set_carry(&mut self, carry: Option<bool>) {
         if let Some(c) = carry {
             self.current.carry = c;
         }
     }
 
-    pub fn check_conditions(&self, conditions: u8) -> Result<bool, RegisterError> {
+    pub const fn check_conditions(&self, conditions: u8) -> Result<bool, RegisterError> {
         match conditions {
             0b0000 => Ok(self.current.zero),
             0b0001 => Ok(!self.current.zero),
@@ -237,15 +237,15 @@ pub struct Registers {
 }
 
 impl Registers {
-    pub fn set_stack_pointer(&mut self, value: u32) {
+    pub const fn set_stack_pointer(&mut self, value: u32) {
         self.stack_pointer = value;
     }
 
-    pub fn set_program_counter(&mut self, value: u32) {
+    pub const fn set_program_counter(&mut self, value: u32) {
         self.program_counter = value;
     }
 
-    pub fn set_instruction_set(&mut self, instruction_set: InstructionSet) {
+    pub const fn set_instruction_set(&mut self, instruction_set: InstructionSet) {
         self.status_registers.current.instruction_set = instruction_set;
     }
 
@@ -296,19 +296,19 @@ impl Registers {
                 *self
                     .registers
                     .get_mut(usize::from(register))
-                    .ok_or(RegisterError::IndexError)? = value
+                    .ok_or(RegisterError::IndexError)? = value;
             }
             8..=12 => {
                 if self.status_registers.current.cpu_mode == CpuMode::Fiq {
                     *self
                         .fiq_registers
                         .get_mut(usize::from(register).wrapping_sub(8))
-                        .ok_or(RegisterError::IndexError)? = value
+                        .ok_or(RegisterError::IndexError)? = value;
                 } else {
                     *self
                         .registers
                         .get_mut(usize::from(register))
-                        .ok_or(RegisterError::IndexError)? = value
+                        .ok_or(RegisterError::IndexError)? = value;
                 }
             }
             13 => self.stack_pointer = value,
@@ -387,7 +387,7 @@ impl Registers {
         self.status_registers.current.cpu_mode
     }
 
-    pub fn check_conditions(&self, conditions: u8) -> Result<bool, RegisterError> {
+    pub const fn check_conditions(&self, conditions: u8) -> Result<bool, RegisterError> {
         self.status_registers.check_conditions(conditions)
     }
 }
