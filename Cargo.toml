@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bitfields = "3.2.0"
 eframe = "0.36.2"
 egui = "0.36.2"
 moving_avg = "0.2.0"
